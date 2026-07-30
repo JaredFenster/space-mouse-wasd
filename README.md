@@ -1,0 +1,125 @@
+<p align="center">
+  <img src="assets/logo.svg" width="128" alt="SpaceMouse WASD logo"/>
+</p>
+
+<h1 align="center">SpaceMouse WASD</h1>
+
+<p align="center">
+  Spacemouse-style fly-through navigation for Autodesk Fusion —<br/>
+  using nothing but your regular mouse and keyboard.
+</p>
+
+<p align="center">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078d4"/>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-3776ab"/>
+  <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none-38e1c8"/>
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green"/>
+</p>
+
+---
+
+Hold a side mouse button and Fusion turns into a video game: the mouse orbits
+the model (cursor hidden, spacemouse-style), keys glide you around with
+smooth, velocity-damped motion. Release the button and everything is
+instantly back to normal.
+
+## Controls (defaults — all rebindable in the app)
+
+| Input | Action |
+|---|---|
+| **Hold forward side button** | Enter fly mode |
+| **Mouse** | Orbit around the model |
+| **W / S** | Pan up / down |
+| **A / D** | Pan left / right |
+| **Shift / Ctrl** | Zoom in / out (smooth dolly toward the model) |
+| **Scroll wheel** | Adjust speed on the fly |
+| **Esc** | Bail out of fly mode |
+
+## How it works
+
+Two parts talk over localhost UDP (port 42737):
+
+```
+┌─────────────────────────┐   motion packets    ┌─────────────────────────┐
+│  Controller app (this   │ ──── UDP 42737 ───► │  Fusion add-in          │
+│  repo's UI): low-level  │                     │  smooths velocities and │
+│  input hooks capture    │ ◄─── heartbeat ──── │  drives the viewport    │
+│  mouse + bound keys     │                     │  camera every frame     │
+└─────────────────────────┘                     └─────────────────────────┘
+```
+
+The external controller is required because Fusion binds keys like `S` and
+`D` to commands — a low-level hook intercepts your movement keys *only while
+flying*, so they never trigger anything. The add-in applies exponential
+velocity smoothing (the spacemouse "glide") and re-anchors the orbit/zoom
+pivot onto the model itself, so zooming flies toward the geometry and
+orbiting after a deep zoom rotates around what you're looking at.
+
+Both parts are pure Python standard library. No packages to install.
+
+## Install
+
+Requirements: Windows 10/11, [Python 3.9+](https://python.org) (check
+"Add to PATH" when installing), Autodesk Fusion.
+
+1. Download this repo (green **Code** button → Download ZIP) and unzip it
+   somewhere permanent.
+2. Run **`install_addin.bat`** — copies the add-in into Fusion's add-ins
+   folder. Restart Fusion (the add-in runs on startup).
+3. Run **`SpaceMouseWASD.bat`** — opens the controller app. When the status
+   card shows **Connected**, hold the forward side mouse button in Fusion
+   and fly.
+
+Tick *Launch at Windows startup* in the app and you never have to think
+about it again.
+
+> **Tip:** Fusion defaults to an orthographic camera, where zoom is just
+> magnification. For the full fly-toward-it depth feel, click the dropdown
+> next to the ViewCube and switch to **Perspective**.
+
+## Configuring
+
+Everything lives in the app: click any key button and press a new key to
+rebind, pick which side button activates fly mode, and drag the speed
+slider. Settings persist to `%APPDATA%\SpaceMouseWASD\config.json`.
+
+Camera *feel* (sensitivity, glide floatiness, axis inversion) lives at the
+top of `addin/SpaceMouseWASD/SpaceMouseWASD.py`:
+
+| Constant | What it does |
+|---|---|
+| `ORBIT_SENS` | Orbit degrees per pixel of mouse movement |
+| `PAN_SPEED` / `DOLLY_SPEED` | Pan / zoom rates |
+| `TAU_MOVE` / `TAU_ORBIT` | Smoothing time constants — bigger = floatier |
+| `INVERT_ORBIT_X/Y`, `INVERT_ZOOM` | Flip directions |
+
+After editing, re-run `install_addin.bat` and restart the add-in
+(Shift+S → Add-Ins → SpaceMouseWASD → Stop → Run).
+
+## Troubleshooting
+
+- **Add-in shows "Waiting..."** — Fusion isn't running the add-in. In
+  Fusion: Shift+S → Add-Ins tab → SpaceMouseWASD → Run (tick *Run on
+  Startup*). The add-in logs to Fusion's Text Commands palette.
+- **Side button doesn't trigger fly mode** — some mouse drivers remap side
+  buttons; set them to default "Back"/"Forward" in your mouse software, or
+  switch the fly button in the app.
+- **Wrong orbit/zoom direction** — flip the `INVERT_*` flags in the add-in.
+- **Fusion window not detected** — the controller matches the foreground
+  window title against `Autodesk Fusion`; if Autodesk renames the window,
+  update `WINDOW_MATCH` in `controller/spacemouse_wasd.py`.
+
+## Repo layout
+
+```
+addin/SpaceMouseWASD/       Fusion add-in (camera driver)
+controller/spacemouse_wasd.py   Controller app (hooks + UI)
+assets/                     Logo and icon
+scripts/gen_icon.py         Regenerates assets/icon.png
+SpaceMouseWASD.bat          Launch the controller app
+install_addin.bat           Install/update the Fusion add-in
+```
+
+## License
+
+[MIT](LICENSE)

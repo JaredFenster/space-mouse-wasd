@@ -1,0 +1,13 @@
+{
+    "autodeskProduct": "Fusion360",
+    "type": "addin",
+    "id": "b7f3c2a1-9e4d-4f6b-8a2c-5d1e0f7a6b39",
+    "author": "Zeon",
+    "description": {
+        "": "Spacemouse-style smooth navigation using CapsLock + WASD + mouse. Works with the companion controller.py script."
+    },
+    "version": "1.0.0",
+    "runOnStartup": true,
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}
