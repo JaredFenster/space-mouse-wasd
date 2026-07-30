@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20(beta)-0078d4"/>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0078d4"/>
   <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-3776ab"/>
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none%20on%20Windows-38e1c8"/>
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green"/>
@@ -74,9 +74,7 @@ Requirements: Windows 10/11, [Python 3.9+](https://python.org) (check
 Tick *Launch at Windows startup* in the app and you never have to think
 about it again.
 
-## Install — macOS (beta)
-
-> macOS support is new and lightly tested — issues and PRs welcome.
+## Install — macOS
 
 Requirements: macOS 12+, Autodesk Fusion, and a Python 3.9+ with **Tk 8.6 or
 newer** plus `pyobjc`.
@@ -113,7 +111,9 @@ them to gestures may need those remaps disabled).
 
 Everything lives in the app: click any key button and press a new key to
 rebind, pick which side button activates fly mode, and drag the speed
-slider. Settings persist to `%APPDATA%\SpaceMouseWASD\config.json`.
+slider. Settings persist per-platform to
+`%APPDATA%\SpaceMouseWASD\config.json` on Windows and
+`~/Library/Application Support/SpaceMouseWASD/config.json` on macOS.
 
 Camera *feel* (sensitivity, glide floatiness, axis inversion) lives at the
 top of `addin/SpaceMouseWASD/SpaceMouseWASD.py`:
@@ -137,9 +137,13 @@ After editing, re-run `install_addin.bat` and restart the add-in
   buttons; set them to default "Back"/"Forward" in your mouse software, or
   switch the fly button in the app.
 - **Wrong orbit/zoom direction** — flip the `INVERT_*` flags in the add-in.
+- **Blank window on macOS** — you're on a Python whose Tk is 8.5.9 (Apple's
+  `/usr/bin/python3`). Launch via `SpaceMouseWASD.command`, which finds a
+  usable interpreter, or install one via Homebrew (see Install — macOS).
 - **Fusion window not detected** — the controller matches the foreground
-  window title against `Autodesk Fusion`; if Autodesk renames the window,
-  update `WINDOW_MATCH` in `controller/spacemouse_wasd.py`.
+  window/app name against `Fusion`; if Autodesk renames it, update
+  `WINDOW_MATCH` in `controller/backend_win.py` (Windows) or `APP_MATCH`
+  in `controller/backend_mac.py` (macOS).
 
 ## Repo layout
 
@@ -148,12 +152,17 @@ addin/SpaceMouseWASD/           Fusion add-in (camera driver, cross-platform)
 controller/spacemouse_wasd.py   Controller app (UI + config)
 controller/engine_base.py       Shared engine core (state + UDP streaming)
 controller/backend_win.py       Windows input backend (ctypes LL hooks)
-controller/backend_mac.py       macOS input backend (Quartz event tap, beta)
+controller/backend_mac.py       macOS input backend (Quartz event tap)
 assets/                         Logo and icon
 scripts/gen_icon.py             Regenerates assets/icon.png
 SpaceMouseWASD.bat / .command   Launch the controller app (Win / mac)
 install_addin.bat / .sh         Install/update the Fusion add-in (Win / mac)
 ```
+
+## Credits
+
+macOS testing and fixes: Devansh Gaur — dragged-event capture, background
+cursor hiding, and the cross-platform custom widgets.
 
 ## License
 

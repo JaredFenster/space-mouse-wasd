@@ -1,4 +1,4 @@
-"""macOS backend for SpaceMouse WASD.  (BETA - see README.)
+"""macOS backend for SpaceMouse WASD.
 
 Uses a Quartz CGEventTap for global input capture, which requires pyobjc:
 
