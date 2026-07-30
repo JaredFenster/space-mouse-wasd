@@ -9,10 +9,11 @@ macOS will also ask you to grant the terminal/Python **Accessibility** and
 first time - the tap cannot be created without it.
 
 Cursor capture is native here: CGAssociateMouseAndMouseCursorPosition(False)
-freezes the cursor while mouse-moved events keep delivering raw deltas, and
+freezes the cursor while the mouse keeps delivering raw deltas, and
 CGDisplayHideCursor hides it. Much cleaner than the Windows overlay trick.
 """
 
+import ctypes
 import threading
 import time
 
@@ -71,6 +72,54 @@ if Quartz:
                  57: Quartz.kCGEventFlagMaskAlphaShift}
 
 
+# Movement arrives as *MouseDragged, not MouseMoved, whenever a button is
+# held - and the fly button is held for the whole of fly mode.
+_MOVE_TYPES = ()
+if Quartz:
+    _MOVE_TYPES = (Quartz.kCGEventMouseMoved,
+                   Quartz.kCGEventOtherMouseDragged,
+                   Quartz.kCGEventLeftMouseDragged,
+                   Quartz.kCGEventRightMouseDragged)
+
+_TAP_TYPES = ()
+if Quartz:
+    _TAP_TYPES = (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp,
+                  Quartz.kCGEventFlagsChanged, Quartz.kCGEventOtherMouseDown,
+                  Quartz.kCGEventOtherMouseUp, Quartz.kCGEventScrollWheel) + \
+                 _MOVE_TYPES
+
+
+def _allow_background_cursor_hiding():
+    """CGDisplayHideCursor normally only applies while the calling app is
+    frontmost - and Fusion is. This connection property opts us out of that,
+    so the cursor can be hidden while Fusion has focus."""
+    try:
+        cg = ctypes.cdll.LoadLibrary(
+            '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
+        cf = ctypes.cdll.LoadLibrary(
+            '/System/Library/Frameworks/CoreFoundation.framework'
+            '/CoreFoundation')
+        cg._CGSDefaultConnection.restype = ctypes.c_int
+        cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        cf.CFStringCreateWithCString.argtypes = (ctypes.c_void_p,
+                                                 ctypes.c_char_p,
+                                                 ctypes.c_uint32)
+        cg.CGSSetConnectionProperty.restype = ctypes.c_int
+        cg.CGSSetConnectionProperty.argtypes = (ctypes.c_int, ctypes.c_int,
+                                                ctypes.c_void_p,
+                                                ctypes.c_void_p)
+        cf.CFRelease.argtypes = (ctypes.c_void_p,)
+        conn = cg._CGSDefaultConnection()
+        key = cf.CFStringCreateWithCString(None, b'SetsCursorInBackground',
+                                           0x08000100)   # kCFStringEncodingUTF8
+        yes = ctypes.c_void_p.in_dll(cf, 'kCFBooleanTrue')
+        cg.CGSSetConnectionProperty(conn, conn, key, yes)
+        cf.CFRelease(key)
+        return True
+    except Exception:
+        return False
+
+
 def normalize_kc(kc):
     return _NORMALIZE.get(kc, kc)
 
@@ -93,6 +142,9 @@ class Engine(BaseEngine):
         super().__init__(cfg, cfg['binds'])
         self._tap = None
         self._tap_loop = None
+        self._cursor_hidden = False
+        self._fg = False
+        self._fg_t = 0.0
 
     # -- lifecycle --
     def _platform_start(self):
@@ -101,6 +153,7 @@ class Engine(BaseEngine):
                           'pip3 install pyobjc-framework-Quartz '
                           'pyobjc-framework-Cocoa')
             return
+        _allow_background_cursor_hiding()
         started = threading.Event()
         threading.Thread(target=self._tap_thread, args=(started,),
                          daemon=True).start()
@@ -112,13 +165,9 @@ class Engine(BaseEngine):
                           'relaunch.')
 
     def _tap_thread(self, started):
-        mask = (Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown) |
-                Quartz.CGEventMaskBit(Quartz.kCGEventKeyUp) |
-                Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged) |
-                Quartz.CGEventMaskBit(Quartz.kCGEventOtherMouseDown) |
-                Quartz.CGEventMaskBit(Quartz.kCGEventOtherMouseUp) |
-                Quartz.CGEventMaskBit(Quartz.kCGEventScrollWheel) |
-                Quartz.CGEventMaskBit(Quartz.kCGEventMouseMoved))
+        mask = 0
+        for etype in _TAP_TYPES:
+            mask |= Quartz.CGEventMaskBit(etype)
         self._tap = Quartz.CGEventTapCreate(
             Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap,
             Quartz.kCGEventTapOptionDefault, mask, self._on_event, None)
@@ -138,22 +187,35 @@ class Engine(BaseEngine):
         if self._tap_loop:
             Quartz.CFRunLoopStop(self._tap_loop)
 
-    def fusion_foreground(self):
+    def fusion_foreground(self, force=False):
+        # The sender loop asks 90x a second; the AppKit round-trip is far too
+        # costly for that, so answer from a short cache unless it must be exact.
+        now = time.monotonic()
+        if not force and now - self._fg_t < 0.25:
+            return self._fg
         try:
             app = NSWorkspace.sharedWorkspace().frontmostApplication()
             name = app.localizedName() or ''
-            return any(m in name for m in APP_MATCH)
+            self._fg = any(m in name for m in APP_MATCH)
         except Exception:
-            return False
+            self._fg = False
+        self._fg_t = now
+        return self._fg
 
     # -- fly transitions --
     def _fly_began(self):
+        # Decoupling the cursor freezes it in place while raw deltas keep
+        # flowing, so the pointer can never drift onto another screen or app.
         Quartz.CGAssociateMouseAndMouseCursorPosition(False)
-        Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())
+        if not self._cursor_hidden:
+            Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())
+            self._cursor_hidden = True
 
     def _fly_ended(self):
         Quartz.CGAssociateMouseAndMouseCursorPosition(True)
-        Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())
+        if self._cursor_hidden:      # hide/show are refcounted - keep balanced
+            Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())
+            self._cursor_hidden = False
 
     # deltas arrive via the event tap; nothing to poll per tick
 
@@ -171,7 +233,7 @@ class Engine(BaseEngine):
                 if btn == _BUTTON_NUM[self.fly_button]:
                     if self.fly:
                         return None
-                    if self.fusion_foreground():
+                    if self.fusion_foreground(force=True):
                         self._start_fly()
                         return None
                 return event
@@ -187,7 +249,7 @@ class Engine(BaseEngine):
             if not self.fly:
                 return event
 
-            if etype == Quartz.kCGEventMouseMoved:
+            if etype in _MOVE_TYPES:
                 dx = Quartz.CGEventGetIntegerValueField(
                     event, Quartz.kCGMouseEventDeltaX)
                 dy = Quartz.CGEventGetIntegerValueField(
