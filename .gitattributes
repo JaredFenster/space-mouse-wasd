@@ -1,0 +1,7 @@
+# Shell scripts must keep LF or macOS refuses to run them (bad interpreter)
+*.sh text eol=lf
+*.command text eol=lf
+*.py text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.ico binary
