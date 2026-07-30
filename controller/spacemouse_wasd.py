@@ -280,28 +280,39 @@ class Engine:
                 ks = ctypes.cast(lParam,
                                  ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                 if not (ks.flags & LLKHF_INJECTED):
-                    down = wParam in (WM_KEYDOWN, WM_SYSKEYDOWN)
                     vk = normalize_vk(ks.vkCode)
-                    if vk in self._bound:
+                    if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                        if vk in self._bound:
+                            with self._lock:
+                                self._down[vk] = True
+                            return 1
+                        if vk == VK_ESCAPE:
+                            self._stop_fly()
+                            return 1
+                    elif vk in self._bound:
                         with self._lock:
-                            self._down[vk] = down
-                        return 1
-                    if vk == VK_ESCAPE and down:
-                        self._stop_fly()
-                        return 1
+                            self._down[vk] = False
+                        # Deliberately NOT blocked: a key-up can't trigger
+                        # anything in Fusion, and swallowing it leaves keys
+                        # (especially Shift/Ctrl) stuck held system-wide if
+                        # they were pressed before fly mode began.
         except Exception:
             pass
         return user32.CallNextHookEx(None, nCode, wParam, lParam)
 
     def _ms_hook(self, nCode, wParam, lParam):
         try:
-            if nCode == 0:
+            # Fast-path: bail before any ctypes work unless this is an event
+            # we might act on. Mouse *moves* are by far the most frequent
+            # message and are never handled here (the sender loop polls
+            # cursor drift instead) - keeping them cheap keeps system-wide
+            # input latency down.
+            if (nCode == 0 and
+                    (wParam == WM_XBUTTONDOWN or wParam == WM_XBUTTONUP or
+                     (self.fly and wParam == WM_MOUSEWHEEL))):
                 ms = ctypes.cast(lParam,
                                  ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                 if not (ms.flags & LLMHF_INJECTED):
-                    # NOTE: mouse *movement* is intentionally not read here.
-                    # LL-hook position semantics proved unreliable; the sender
-                    # loop polls cursor drift from the anchor instead.
                     if wParam == WM_XBUTTONDOWN:
                         if ((ms.mouseData >> 16) & 0xFFFF) == self.fly_button:
                             if self.fly:
@@ -729,6 +740,20 @@ def startup_path():
 
 def main():
     selftest = '--selftest' in sys.argv
+
+    # Single instance: two copies mean two sets of hooks fighting over the
+    # cursor and double-blocking keys - a reliable source of input glitches.
+    kernel32.CreateMutexW.restype = w.HANDLE
+    kernel32.CreateMutexW.argtypes = (w.LPVOID, w.BOOL, w.LPCWSTR)
+    kernel32.CreateMutexW(None, False, 'SpaceMouseWASD_SingleInstance')
+    if ctypes.get_last_error() == 183:      # ERROR_ALREADY_EXISTS
+        root = tk.Tk()
+        root.withdraw()
+        from tkinter import messagebox
+        messagebox.showinfo(APP_NAME, APP_NAME + ' is already running.\n'
+                            'Check the taskbar or system tray.')
+        return
+
     cfg = load_config()
     root = tk.Tk()
     engine = Engine(cfg)
