@@ -98,11 +98,17 @@ DIM = '#8a93a3'
 OK_GREEN = '#48d17c'
 WAIT_AMBER = '#f0b45a'
 
-_UIFONT = 'Segoe UI' if sys.platform != 'darwin' else 'Helvetica Neue'
-FONT = (_UIFONT, 10)
-FONT_SM = (_UIFONT, 9)
-FONT_KEY = ('Consolas' if sys.platform != 'darwin' else 'Menlo', 10, 'bold')
-FONT_TITLE = (_UIFONT, 17, 'bold')
+if sys.platform == 'darwin':
+    # Aqua renders a given point size smaller than Win32 does; the bump keeps
+    # both platforms optically identical.
+    _UIFONT, _MONOFONT, _BUMP = 'Helvetica Neue', 'Menlo', 2
+else:
+    _UIFONT, _MONOFONT, _BUMP = 'Segoe UI', 'Consolas', 0
+FONT = (_UIFONT, 10 + _BUMP)
+FONT_SM = (_UIFONT, 9 + _BUMP)
+FONT_KEY = (_MONOFONT, 10 + _BUMP, 'bold')
+FONT_TITLE = (_UIFONT, 17 + _BUMP, 'bold')
+FONT_CAP = (_UIFONT, 8 + _BUMP, 'bold')
 
 
 def draw_logo(cv, size):
@@ -118,6 +124,142 @@ def draw_logo(cv, size):
                 (72, 114, 54, 128, 72, 142), (184, 114, 202, 128, 184, 142)):
         cv.create_line(*sc(*pts), fill=TEXT, width=chev,
                        capstyle='round', joinstyle='round')
+
+
+# Tk's native Button/OptionMenu/Scale are drawn by the platform on macOS and
+# silently ignore bg/fg, which leaves light Aqua controls stranded on the dark
+# cards. These three are pure Label/Canvas, so both platforms match exactly.
+class FlatButton(tk.Label):
+    def __init__(self, parent, text, command, width=14, font=FONT_KEY):
+        super().__init__(parent, text=text, font=font, fg=TEXT, bg=FIELD,
+                         width=width, pady=4, cursor='hand2')
+        self._command = command
+        self.bind('<Button-1>', lambda _e: self._command())
+        self.bind('<Enter>', lambda _e: self.config(bg=FIELD_HI))
+        self.bind('<Leave>', lambda _e: self.config(bg=FIELD))
+
+
+class Dropdown(tk.Frame):
+    def __init__(self, parent, options, value, on_change, width=13):
+        super().__init__(parent, bg=FIELD, cursor='hand2')
+        self.options = list(options)
+        self.on_change = on_change
+        self.var = tk.StringVar(value=value)
+        self._pop = None
+        self.lbl = tk.Label(self, textvariable=self.var, font=FONT, fg=TEXT,
+                            bg=FIELD, width=width, anchor='w', pady=4,
+                            cursor='hand2')
+        self.lbl.pack(side='left', padx=(9, 0))
+        self.caret = tk.Label(self, text='▾', font=FONT, fg=DIM, bg=FIELD,
+                              pady=4, cursor='hand2')
+        self.caret.pack(side='right', padx=(0, 9))
+        for w in (self, self.lbl, self.caret):
+            w.bind('<Button-1>', self._toggle)
+            w.bind('<Enter>', self._hover_on)
+            w.bind('<Leave>', self._hover_off)
+
+    def get(self):
+        return self.var.get()
+
+    def set(self, value):
+        self.var.set(value)
+
+    def _hover_on(self, _e=None):
+        for w in (self, self.lbl, self.caret):
+            w.config(bg=FIELD_HI)
+
+    def _hover_off(self, _e=None):
+        for w in (self, self.lbl, self.caret):
+            w.config(bg=FIELD)
+
+    def _toggle(self, _e=None):
+        if self._pop is not None:
+            self._close()
+        else:
+            self._open()
+
+    def _open(self):
+        top = tk.Toplevel(self)
+        top.overrideredirect(True)
+        top.configure(bg=FIELD_HI)
+        try:
+            top.attributes('-topmost', True)
+        except tk.TclError:
+            pass
+        for opt in self.options:
+            item = tk.Label(top, text=opt, font=FONT, fg=TEXT, bg=FIELD,
+                            anchor='w', padx=9, pady=5, cursor='hand2')
+            item.pack(fill='x', padx=1, pady=1)
+            item.bind('<Enter>', lambda _e, w=item: w.config(bg=FIELD_HI))
+            item.bind('<Leave>', lambda _e, w=item: w.config(bg=FIELD))
+            item.bind('<Button-1>', lambda _e, o=opt: self._pick(o))
+        self.update_idletasks()
+        top.update_idletasks()
+        top.geometry('%dx%d+%d+%d' % (
+            self.winfo_width(), top.winfo_reqheight(),
+            self.winfo_rootx(), self.winfo_rooty() + self.winfo_height() + 2))
+        # A local grab routes stray clicks here so the popup can dismiss itself.
+        top.grab_set()
+        top.bind('<Button-1>', lambda _e: self._close())
+        top.bind('<Escape>', lambda _e: self._close())
+        self._pop = top
+
+    def _pick(self, option):
+        self._close()
+        if option != self.var.get():
+            self.var.set(option)
+            self.on_change(option)
+
+    def _close(self):
+        if self._pop is not None:
+            self._pop.grab_release()
+            self._pop.destroy()
+            self._pop = None
+
+
+class Slider(tk.Canvas):
+    def __init__(self, parent, from_, to, value, on_change,
+                 resolution=0.05, width=150, height=22):
+        super().__init__(parent, width=width, height=height, bg=CARD,
+                         highlightthickness=0, bd=0, cursor='hand2')
+        self.from_, self.to = from_, to
+        self.resolution = resolution
+        self.on_change = on_change
+        self.value = value
+        self.bind('<Configure>', lambda _e: self._redraw())
+        self.bind('<Button-1>', self._drag)
+        self.bind('<B1-Motion>', self._drag)
+
+    def set(self, value):
+        self.value = min(max(value, self.from_), self.to)
+        self._redraw()
+
+    def _track(self):
+        return 10, max(self.winfo_width(), 20) - 10
+
+    def _redraw(self):
+        self.delete('all')
+        x0, x1 = self._track()
+        cy = int(self['height']) // 2
+        frac = (self.value - self.from_) / float(self.to - self.from_)
+        kx = x0 + frac * (x1 - x0)
+        self.create_line(x0, cy, x1, cy, fill=FIELD, width=6, capstyle='round')
+        if kx > x0 + 0.5:
+            self.create_line(x0, cy, kx, cy, fill=ACCENT, width=6,
+                             capstyle='round')
+        self.create_oval(kx - 7, cy - 7, kx + 7, cy + 7, fill=TEXT,
+                         outline='')
+
+    def _drag(self, event):
+        x0, x1 = self._track()
+        frac = min(max((event.x - x0) / float(max(x1 - x0, 1)), 0.0), 1.0)
+        raw = self.from_ + frac * (self.to - self.from_)
+        stepped = round(raw / self.resolution) * self.resolution
+        stepped = min(max(stepped, self.from_), self.to)
+        if stepped != self.value:
+            self.value = stepped
+            self._redraw()
+            self.on_change(stepped)
 
 
 class App:
@@ -166,19 +308,16 @@ class App:
 
         # bindings card
         bcard = self._card(pad)
-        tk.Label(bcard, text='KEY BINDINGS', font=(_UIFONT, 8, 'bold'),
+        tk.Label(bcard, text='KEY BINDINGS', font=FONT_CAP,
                  fg=DIM, bg=CARD).grid(row=0, column=0, columnspan=2,
                                        sticky='w', padx=14, pady=(12, 6))
         for i, (action, label) in enumerate(ACTIONS, start=1):
             tk.Label(bcard, text=label, font=FONT, fg=TEXT, bg=CARD,
                      anchor='w').grid(row=i, column=0, sticky='w',
                                       padx=(14, 20), pady=3)
-            btn = tk.Button(
-                bcard, text=backend.key_name(cfg['binds'][action]),
-                font=FONT_KEY, fg=TEXT, bg=FIELD, activebackground=FIELD_HI,
-                activeforeground=TEXT, relief='flat', bd=0, width=14,
-                cursor='hand2', pady=3,
-                command=lambda a=action: self.begin_capture(a))
+            btn = FlatButton(bcard,
+                             text=backend.key_name(cfg['binds'][action]),
+                             command=lambda a=action: self.begin_capture(a))
             btn.grid(row=i, column=1, sticky='e', padx=(0, 14), pady=3)
             self.bind_buttons[action] = btn
         bcard.grid_columnconfigure(0, weight=1)
@@ -188,16 +327,10 @@ class App:
                  anchor='w').grid(row=r, column=0, sticky='w',
                                   padx=(14, 20), pady=(10, 3))
         labels = backend.FLY_BUTTON_LABELS
-        self.btn_var = tk.StringVar(value=labels[cfg['fly_button']])
-        om = tk.OptionMenu(bcard, self.btn_var, *labels.values(),
-                           command=self.on_fly_button)
-        om.configure(font=FONT, fg=TEXT, bg=FIELD, activebackground=FIELD_HI,
-                     activeforeground=TEXT, relief='flat', bd=0, width=12,
-                     highlightthickness=0, cursor='hand2')
-        om['menu'].configure(font=FONT, fg=TEXT, bg=FIELD,
-                             activebackground=FIELD_HI,
-                             activeforeground=TEXT, bd=0)
-        om.grid(row=r, column=1, sticky='e', padx=(0, 14), pady=(10, 3))
+        self.fly_dd = Dropdown(bcard, list(labels.values()),
+                               labels[cfg['fly_button']], self.on_fly_button)
+        self.fly_dd.grid(row=r, column=1, sticky='e', padx=(0, 14),
+                         pady=(10, 3))
 
         r += 1
         srow = tk.Frame(bcard, bg=CARD)
@@ -208,13 +341,9 @@ class App:
         self.speed_lbl = tk.Label(srow, text='x%.2f' % cfg['speed'],
                                   font=FONT_KEY, fg=ACCENT, bg=CARD, width=6)
         self.speed_lbl.pack(side='right')
-        self.speed_var = tk.DoubleVar(value=cfg['speed'])
-        sc = tk.Scale(srow, variable=self.speed_var, from_=SPEED_MIN,
-                      to=SPEED_MAX, resolution=0.05, orient='horizontal',
-                      showvalue=0, bg=CARD, fg=TEXT, troughcolor=FIELD,
-                      highlightthickness=0, bd=0, sliderrelief='flat',
-                      activebackground=ACCENT, command=self.on_speed)
-        sc.pack(side='left', fill='x', expand=True, padx=12)
+        self.speed_slider = Slider(srow, SPEED_MIN, SPEED_MAX, cfg['speed'],
+                                   self.on_speed)
+        self.speed_slider.pack(side='left', fill='x', expand=True, padx=12)
 
         # footer
         foot = tk.Frame(root, bg=BG)
@@ -312,8 +441,8 @@ class App:
         save_config(self.cfg)
         self._update_hint()
 
-    def on_speed(self, val):
-        v = float(val)
+    def on_speed(self, value):
+        v = float(value)
         self.engine.speed = v
         self.cfg['speed'] = v
         self.speed_lbl.config(text='x%.2f' % v)
@@ -329,8 +458,9 @@ class App:
         self.engine.set_binds(self.cfg['binds'])
         self.engine.fly_button = 2
         self.engine.speed = 1.0
-        self.speed_var.set(1.0)
-        self.btn_var.set(backend.FLY_BUTTON_LABELS[2])
+        self.speed_slider.set(1.0)
+        self.speed_lbl.config(text='x%.2f' % 1.0)
+        self.fly_dd.set(backend.FLY_BUTTON_LABELS[2])
         save_config(self.cfg)
         self.end_capture()
         self._update_hint()
@@ -365,7 +495,7 @@ class App:
             val.config(text='Waiting...', fg=WAIT_AMBER)
         if e.speed_dirty:                 # wheel changed speed mid-fly
             e.speed_dirty = False
-            self.speed_var.set(e.speed)
+            self.speed_slider.set(e.speed)
             self.cfg['speed'] = e.speed
             self.speed_lbl.config(text='x%.2f' % e.speed)
             save_config(self.cfg)
@@ -381,6 +511,34 @@ def startup_path():
     return os.path.join(os.environ.get('APPDATA', '.'),
                         r'Microsoft\Windows\Start Menu\Programs\Startup',
                         'SpaceMouseWASD.bat')
+
+
+TK_TOO_OLD = """\
+This Python is linked against Tk {ver}, which cannot draw windows correctly
+on modern macOS - the app would open completely blank.
+
+Apple's /usr/bin/python3 always ships this old Tk. Install a Python with
+Tk 8.6+ and launch with that instead:
+
+    brew install python@3.13 python-tk@3.13
+    /opt/homebrew/bin/python3.13 controller/spacemouse_wasd.py
+
+SpaceMouseWASD.command picks a suitable interpreter automatically."""
+
+
+def tk_is_usable(root):
+    """Guard against the blank-window failure mode rather than shipping a
+    UI the user cannot see."""
+    if sys.platform != 'darwin' or tk.TkVersion >= 8.6:
+        return True
+    msg = TK_TOO_OLD.format(ver=root.tk.call('info', 'patchlevel'))
+    print(msg, file=sys.stderr)
+    try:
+        from tkinter import messagebox
+        messagebox.showerror(APP_NAME, msg)
+    except Exception:
+        pass
+    return False
 
 
 def acquire_single_instance():
@@ -409,6 +567,10 @@ def main():
 
     cfg = load_config()
     root = tk.Tk()
+    if not tk_is_usable(root):
+        root.destroy()
+        lock.close()
+        return
     engine = backend.Engine(cfg)
     engine.start()
     app = App(root, engine, cfg)

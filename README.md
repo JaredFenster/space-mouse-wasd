@@ -78,16 +78,24 @@ about it again.
 
 > macOS support is new and lightly tested — issues and PRs welcome.
 
-Requirements: macOS 12+, Python 3.9+, Autodesk Fusion.
+Requirements: macOS 12+, Autodesk Fusion, and a Python 3.9+ with **Tk 8.6 or
+newer** plus `pyobjc`.
+
+> Apple's built-in `/usr/bin/python3` will **not** work: it links Tk 8.5.9
+> from 2010, which renders the window completely blank on modern macOS.
+> Install a Python that bundles a current Tk.
 
 1. Download and unzip the repo, then in Terminal from the repo folder:
    ```sh
-   pip3 install pyobjc-framework-Quartz pyobjc-framework-Cocoa
+   brew install python@3.13 python-tk@3.13
+   /opt/homebrew/bin/python3.13 -m pip install \
+       pyobjc-framework-Quartz pyobjc-framework-Cocoa
    chmod +x install_addin.sh SpaceMouseWASD.command
    ./install_addin.sh
    ```
-2. Restart Fusion, then double-click **`SpaceMouseWASD.command`** (or run
-   `python3 controller/spacemouse_wasd.py`).
+2. Restart Fusion, then double-click **`SpaceMouseWASD.command`** — it finds
+   the first interpreter on the machine that has both a usable Tk and pyobjc,
+   so you do not have to remember which python to run it with.
 3. macOS will prompt for **Accessibility** and **Input Monitoring**
    permission for Terminal/Python (System Settings → Privacy & Security).
    Grant both and relaunch — global input capture is impossible without
