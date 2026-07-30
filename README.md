@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078d4"/>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20(beta)-0078d4"/>
   <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-3776ab"/>
-  <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none-38e1c8"/>
+  <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none%20on%20Windows-38e1c8"/>
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green"/>
 </p>
 
@@ -55,9 +55,10 @@ velocity smoothing (the spacemouse "glide") and re-anchors the orbit/zoom
 pivot onto the model itself, so zooming flies toward the geometry and
 orbiting after a deep zoom rotates around what you're looking at.
 
-Both parts are pure Python standard library. No packages to install.
+On Windows both parts are pure Python standard library — no packages to
+install. On macOS the controller needs `pyobjc` for the Quartz event tap.
 
-## Install
+## Install — Windows
 
 Requirements: Windows 10/11, [Python 3.9+](https://python.org) (check
 "Add to PATH" when installing), Autodesk Fusion.
@@ -72,6 +73,29 @@ Requirements: Windows 10/11, [Python 3.9+](https://python.org) (check
 
 Tick *Launch at Windows startup* in the app and you never have to think
 about it again.
+
+## Install — macOS (beta)
+
+> macOS support is new and lightly tested — issues and PRs welcome.
+
+Requirements: macOS 12+, Python 3.9+, Autodesk Fusion.
+
+1. Download and unzip the repo, then in Terminal from the repo folder:
+   ```sh
+   pip3 install pyobjc-framework-Quartz pyobjc-framework-Cocoa
+   chmod +x install_addin.sh SpaceMouseWASD.command
+   ./install_addin.sh
+   ```
+2. Restart Fusion, then double-click **`SpaceMouseWASD.command`** (or run
+   `python3 controller/spacemouse_wasd.py`).
+3. macOS will prompt for **Accessibility** and **Input Monitoring**
+   permission for Terminal/Python (System Settings → Privacy & Security).
+   Grant both and relaunch — global input capture is impossible without
+   them, and the app will tell you if the tap couldn't be created.
+
+On macOS the default zoom keys are Shift / Control, and "side buttons"
+are mouse buttons 4 and 5 (most third-party mice; drivers that remap
+them to gestures may need those remaps disabled).
 
 > **Tip:** Fusion defaults to an orthographic camera, where zoom is just
 > magnification. For the full fly-toward-it depth feel, click the dropdown
@@ -112,12 +136,15 @@ After editing, re-run `install_addin.bat` and restart the add-in
 ## Repo layout
 
 ```
-addin/SpaceMouseWASD/       Fusion add-in (camera driver)
-controller/spacemouse_wasd.py   Controller app (hooks + UI)
-assets/                     Logo and icon
-scripts/gen_icon.py         Regenerates assets/icon.png
-SpaceMouseWASD.bat          Launch the controller app
-install_addin.bat           Install/update the Fusion add-in
+addin/SpaceMouseWASD/           Fusion add-in (camera driver, cross-platform)
+controller/spacemouse_wasd.py   Controller app (UI + config)
+controller/engine_base.py       Shared engine core (state + UDP streaming)
+controller/backend_win.py       Windows input backend (ctypes LL hooks)
+controller/backend_mac.py       macOS input backend (Quartz event tap, beta)
+assets/                         Logo and icon
+scripts/gen_icon.py             Regenerates assets/icon.png
+SpaceMouseWASD.bat / .command   Launch the controller app (Win / mac)
+install_addin.bat / .sh         Install/update the Fusion add-in (Win / mac)
 ```
 
 ## License

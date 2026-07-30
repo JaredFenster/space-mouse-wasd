@@ -6,29 +6,38 @@ enter fly mode: the mouse orbits (cursor hidden), bindable keys pan and zoom,
 and motion is streamed over localhost UDP to the companion Fusion add-in,
 which drives the camera with velocity smoothing.
 
-Pure standard library (ctypes + tkinter). Windows only.
+Windows: pure standard library.  macOS (beta): needs pyobjc (see README).
 """
 
-import ctypes
-import ctypes.wintypes as w
 import json
 import os
 import socket
 import sys
-import threading
 import time
 import tkinter as tk
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+if sys.platform == 'darwin':
+    import backend_mac as backend
+else:
+    import backend_win as backend
+
+from engine_base import SPEED_MIN, SPEED_MAX
+
 APP_NAME = 'SpaceMouse WASD'
-VERSION = '1.0.0'
-UDP_PORT = 42737          # must match the add-in
-SEND_HZ = 90              # motion packet rate
-SPEED_MIN, SPEED_MAX = 0.15, 5.0
-WINDOW_MATCH = ('Autodesk Fusion', 'Fusion 360')
-CONFIG_DIR = os.path.join(os.environ.get('APPDATA', '.'), 'SpaceMouseWASD')
+VERSION = '1.1.0'
+LOCK_PORT = 42739         # single-instance guard (bound while app runs)
+if sys.platform == 'darwin':
+    CONFIG_DIR = os.path.expanduser(
+        '~/Library/Application Support/SpaceMouseWASD')
+else:
+    CONFIG_DIR = os.path.join(os.environ.get('APPDATA', '.'),
+                              'SpaceMouseWASD')
 CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          '..', 'assets')
+BINDS_KEY = 'binds_mac' if sys.platform == 'darwin' else 'binds_win'
 
 ACTIONS = [
     ('pan_up', 'Pan up'),
@@ -38,136 +47,20 @@ ACTIONS = [
     ('zoom_in', 'Zoom in'),
     ('zoom_out', 'Zoom out'),
 ]
-DEFAULT_CONFIG = {
-    'binds': {'pan_up': 0x57, 'pan_down': 0x53,        # W / S
-              'pan_left': 0x41, 'pan_right': 0x44,     # A / D
-              'zoom_in': 0x10, 'zoom_out': 0x11},      # Shift / Ctrl
-    'fly_button': 2,      # 2 = forward side button, 1 = back side button
-    'speed': 1.0,
-}
-
-# ---------------------------------------------------------------- win32 ----
-user32 = ctypes.WinDLL('user32', use_last_error=True)
-kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-gdi32 = ctypes.WinDLL('gdi32', use_last_error=True)
-
-WH_KEYBOARD_LL, WH_MOUSE_LL = 13, 14
-WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
-WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0104, 0x0105
-WM_MOUSEWHEEL = 0x020A
-WM_XBUTTONDOWN, WM_XBUTTONUP = 0x020B, 0x020C
-VK_ESCAPE = 0x1B
-LLKHF_INJECTED, LLMHF_INJECTED = 0x10, 0x01
-
-WS_POPUP = 0x80000000
-WS_EX_TOPMOST, WS_EX_TOOLWINDOW = 0x0008, 0x0080
-WS_EX_NOACTIVATE, WS_EX_LAYERED = 0x08000000, 0x00080000
-LWA_ALPHA = 0x2
-SW_HIDE = 0
-SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0010, 0x0040
-HWND_TOPMOST = -1
-SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
-SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
-BLACK_BRUSH = 4
-
-ULONG_PTR = ctypes.c_size_t
-LRESULT = ctypes.c_ssize_t
-
-
-class KBDLLHOOKSTRUCT(ctypes.Structure):
-    _fields_ = [('vkCode', w.DWORD), ('scanCode', w.DWORD),
-                ('flags', w.DWORD), ('time', w.DWORD),
-                ('dwExtraInfo', ULONG_PTR)]
-
-
-class MSLLHOOKSTRUCT(ctypes.Structure):
-    _fields_ = [('pt', w.POINT), ('mouseData', w.DWORD),
-                ('flags', w.DWORD), ('time', w.DWORD),
-                ('dwExtraInfo', ULONG_PTR)]
-
-
-HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, w.WPARAM, w.LPARAM)
-WNDPROC = ctypes.WINFUNCTYPE(LRESULT, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
-
-user32.SetWindowsHookExW.restype = w.HHOOK
-user32.SetWindowsHookExW.argtypes = (ctypes.c_int, HOOKPROC, w.HINSTANCE,
-                                     w.DWORD)
-user32.CallNextHookEx.restype = LRESULT
-user32.CallNextHookEx.argtypes = (w.HHOOK, ctypes.c_int, w.WPARAM, w.LPARAM)
-user32.DefWindowProcW.restype = LRESULT
-user32.DefWindowProcW.argtypes = (w.HWND, w.UINT, w.WPARAM, w.LPARAM)
-user32.CreateWindowExW.restype = w.HWND
-user32.CreateWindowExW.argtypes = (w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD,
-                                   ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                                   ctypes.c_int, w.HWND, w.HMENU, w.HINSTANCE,
-                                   w.LPVOID)
-user32.CreateCursor.restype = w.HANDLE
-user32.CreateCursor.argtypes = (w.HINSTANCE, ctypes.c_int, ctypes.c_int,
-                                ctypes.c_int, ctypes.c_int,
-                                ctypes.c_void_p, ctypes.c_void_p)
-user32.SetWindowPos.argtypes = (w.HWND, w.HWND, ctypes.c_int, ctypes.c_int,
-                                ctypes.c_int, ctypes.c_int, w.UINT)
-user32.ShowWindow.argtypes = (w.HWND, ctypes.c_int)
-user32.SetLayeredWindowAttributes.argtypes = (w.HWND, w.DWORD,
-                                              ctypes.c_ubyte, w.DWORD)
-kernel32.GetModuleHandleW.restype = w.HMODULE
-
-
-class WNDCLASSW(ctypes.Structure):
-    _fields_ = [('style', w.UINT), ('lpfnWndProc', WNDPROC),
-                ('cbClsExtra', ctypes.c_int), ('cbWndExtra', ctypes.c_int),
-                ('hInstance', w.HINSTANCE), ('hIcon', w.HANDLE),
-                ('hCursor', w.HANDLE), ('hbrBackground', w.HANDLE),
-                ('lpszMenuName', w.LPCWSTR), ('lpszClassName', w.LPCWSTR)]
-
-
-def fusion_foreground():
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return False
-    buf = ctypes.create_unicode_buffer(256)
-    user32.GetWindowTextW(hwnd, buf, 256)
-    title = buf.value
-    return any(m in title for m in WINDOW_MATCH)
-
-
-def normalize_vk(vk):
-    """Collapse the LL hook's side-specific modifier codes to generic ones."""
-    if vk in (0xA0, 0xA1):
-        return 0x10   # Shift
-    if vk in (0xA2, 0xA3):
-        return 0x11   # Ctrl
-    if vk in (0xA4, 0xA5):
-        return 0x12   # Alt
-    return vk
-
-
-_EXTENDED_VKS = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-                 0x2D, 0x2E, 0x5B, 0x5C}
-_VK_NAMES = {0x10: 'Shift', 0x11: 'Ctrl', 0x12: 'Alt', 0x14: 'CapsLock',
-             0x20: 'Space', 0x09: 'Tab', 0x0D: 'Enter', 0x08: 'Backspace'}
-
-
-def key_name(vk):
-    if vk in _VK_NAMES:
-        return _VK_NAMES[vk]
-    sc = user32.MapVirtualKeyW(vk, 0)
-    lp = sc << 16
-    if vk in _EXTENDED_VKS:
-        lp |= 1 << 24
-    buf = ctypes.create_unicode_buffer(64)
-    if user32.GetKeyNameTextW(lp, buf, 64):
-        return buf.value
-    return 'VK 0x%02X' % vk
 
 
 # --------------------------------------------------------------- config ----
 def load_config():
-    cfg = json.loads(json.dumps(DEFAULT_CONFIG))   # deep copy
+    cfg = {'binds': dict(backend.DEFAULT_BINDS), 'fly_button': 2,
+           'speed': 1.0}
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             saved = json.load(f)
-        for k, v in saved.get('binds', {}).items():
+        # migrate pre-1.1 configs, whose Windows binds lived under 'binds'
+        saved_binds = saved.get(BINDS_KEY)
+        if saved_binds is None and BINDS_KEY == 'binds_win':
+            saved_binds = saved.get('binds')
+        for k, v in (saved_binds or {}).items():
             if k in cfg['binds'] and isinstance(v, int):
                 cfg['binds'][k] = v
         if saved.get('fly_button') in (1, 2):
@@ -175,279 +68,23 @@ def load_config():
         sp = saved.get('speed')
         if isinstance(sp, (int, float)):
             cfg['speed'] = min(max(float(sp), SPEED_MIN), SPEED_MAX)
+        cfg['_other_binds'] = {k: v for k, v in saved.items()
+                              if k.startswith('binds_') and k != BINDS_KEY}
     except (OSError, ValueError):
         pass
     return cfg
 
 
 def save_config(cfg):
+    out = {BINDS_KEY: cfg['binds'], 'fly_button': cfg['fly_button'],
+           'speed': cfg['speed']}
+    out.update(cfg.get('_other_binds', {}))    # keep the other OS's binds
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(cfg, f, indent=2)
+            json.dump(out, f, indent=2)
     except OSError:
         pass
-
-
-# --------------------------------------------------------------- engine ----
-class Engine:
-    """Input capture + motion streaming. Hooks must be installed from the
-    thread that runs the Tk mainloop (it pumps their messages)."""
-
-    def __init__(self, cfg):
-        self.binds = dict(cfg['binds'])
-        self.fly_button = cfg['fly_button']
-        self.speed = cfg['speed']
-        self.speed_dirty = False      # set when wheel changes speed mid-fly
-        self.fly = False
-        self.last_ack = 0.0
-        self.error = None
-        self._bound = set(self.binds.values())
-        self._down = {}
-        self._accum = [0.0, 0.0]
-        self._anchor = w.POINT(0, 0)
-        self._last_fly_end = 0.0
-        self._lock = threading.Lock()
-        self._running = False
-        self._hk = self._hm = None
-        self._overlay = None
-        self._refs = []               # keep ctypes callbacks alive
-
-    # -- lifecycle --
-    def start(self):
-        self._create_overlay()
-        kb = HOOKPROC(self._kb_hook)
-        ms = HOOKPROC(self._ms_hook)
-        self._refs += [kb, ms]
-        self._hk = user32.SetWindowsHookExW(WH_KEYBOARD_LL, kb, None, 0)
-        self._hm = user32.SetWindowsHookExW(WH_MOUSE_LL, ms, None, 0)
-        if not self._hk or not self._hm:
-            self.error = ('Failed to install input hooks '
-                          '(error %d)' % ctypes.get_last_error())
-            return
-        self._running = True
-        threading.Thread(target=self._sender, daemon=True).start()
-
-    def stop(self):
-        self._running = False
-        if self.fly:
-            self._stop_fly()
-        for h in (self._hk, self._hm):
-            if h:
-                user32.UnhookWindowsHookEx(h)
-        self._hk = self._hm = None
-
-    def set_binds(self, binds):
-        with self._lock:
-            self.binds = dict(binds)
-            self._bound = set(binds.values())
-            self._down.clear()
-
-    # -- fly mode --
-    def _start_fly(self):
-        with self._lock:
-            self.fly = True
-            self._down.clear()
-            self._accum[0] = self._accum[1] = 0.0
-        self._clamp_anchor()
-        self._show_overlay()
-
-    def _stop_fly(self):
-        with self._lock:
-            self.fly = False
-            self._down.clear()
-            self._accum[0] = self._accum[1] = 0.0
-            self._last_fly_end = time.monotonic()
-        self._hide_overlay()
-
-    def _clamp_anchor(self):
-        """Keep the anchor away from screen edges so raw deltas don't clip."""
-        pt = w.POINT()
-        user32.GetCursorPos(ctypes.byref(pt))
-        sw = user32.GetSystemMetrics(0)
-        sh = user32.GetSystemMetrics(1)
-        nx = min(max(pt.x, 60), sw - 60)
-        ny = min(max(pt.y, 60), sh - 60)
-        if (nx, ny) != (pt.x, pt.y):
-            user32.SetCursorPos(nx, ny)
-            user32.GetCursorPos(ctypes.byref(pt))
-        self._anchor = pt
-
-    # -- hooks --
-    def _kb_hook(self, nCode, wParam, lParam):
-        try:
-            if nCode == 0 and self.fly:
-                ks = ctypes.cast(lParam,
-                                 ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                if not (ks.flags & LLKHF_INJECTED):
-                    vk = normalize_vk(ks.vkCode)
-                    if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
-                        if vk in self._bound:
-                            with self._lock:
-                                self._down[vk] = True
-                            return 1
-                        if vk == VK_ESCAPE:
-                            self._stop_fly()
-                            return 1
-                    elif vk in self._bound:
-                        with self._lock:
-                            self._down[vk] = False
-                        # Deliberately NOT blocked: a key-up can't trigger
-                        # anything in Fusion, and swallowing it leaves keys
-                        # (especially Shift/Ctrl) stuck held system-wide if
-                        # they were pressed before fly mode began.
-        except Exception:
-            pass
-        return user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-    def _ms_hook(self, nCode, wParam, lParam):
-        try:
-            # Fast-path: bail before any ctypes work unless this is an event
-            # we might act on. Mouse *moves* are by far the most frequent
-            # message and are never handled here (the sender loop polls
-            # cursor drift instead) - keeping them cheap keeps system-wide
-            # input latency down.
-            if (nCode == 0 and
-                    (wParam == WM_XBUTTONDOWN or wParam == WM_XBUTTONUP or
-                     (self.fly and wParam == WM_MOUSEWHEEL))):
-                ms = ctypes.cast(lParam,
-                                 ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-                if not (ms.flags & LLMHF_INJECTED):
-                    if wParam == WM_XBUTTONDOWN:
-                        if ((ms.mouseData >> 16) & 0xFFFF) == self.fly_button:
-                            if self.fly:
-                                return 1
-                            if fusion_foreground():
-                                self._start_fly()
-                                return 1
-                    elif wParam == WM_XBUTTONUP:
-                        if (((ms.mouseData >> 16) & 0xFFFF) == self.fly_button
-                                and self.fly):
-                            self._stop_fly()
-                            return 1
-                    elif wParam == WM_MOUSEWHEEL and self.fly:
-                        delta = ctypes.c_short(
-                            (ms.mouseData >> 16) & 0xFFFF).value
-                        with self._lock:
-                            self.speed = min(
-                                max(self.speed * (1.15 ** (delta / 120.0)),
-                                    SPEED_MIN), SPEED_MAX)
-                            self.speed_dirty = True
-                        return 1
-        except Exception:
-            pass
-        return user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-    # -- cursor-hiding overlay --
-    def _create_overlay(self):
-        """Fullscreen, imperceptible (alpha=1), topmost, non-activating window
-        with an invisible cursor. Shown only during fly mode: the pointer sits
-        on it, so the cursor disappears without touching system cursors."""
-        and_mask = (ctypes.c_ubyte * 128)(*([0xFF] * 128))
-        xor_mask = (ctypes.c_ubyte * 128)(*([0x00] * 128))
-        hinst = kernel32.GetModuleHandleW(None)
-        invis = user32.CreateCursor(hinst, 0, 0, 32, 32, and_mask, xor_mask)
-
-        proc = WNDPROC(lambda h, m, wp, lp: user32.DefWindowProcW(h, m, wp, lp))
-        self._refs.append(proc)
-
-        wc = WNDCLASSW()
-        wc.lpfnWndProc = proc
-        wc.hInstance = hinst
-        wc.hCursor = invis
-        wc.hbrBackground = gdi32.GetStockObject(BLACK_BRUSH)
-        wc.lpszClassName = 'SpaceMouseWASDOverlay'
-        if not user32.RegisterClassW(ctypes.byref(wc)):
-            return
-        self._overlay = user32.CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
-            'SpaceMouseWASDOverlay', '', WS_POPUP, 0, 0, 10, 10,
-            None, None, hinst, None)
-        if self._overlay:
-            user32.SetLayeredWindowAttributes(self._overlay, 0, 1, LWA_ALPHA)
-
-    def _show_overlay(self):
-        if self._overlay:
-            user32.SetWindowPos(
-                self._overlay, HWND_TOPMOST,
-                user32.GetSystemMetrics(SM_XVIRTUALSCREEN),
-                user32.GetSystemMetrics(SM_YVIRTUALSCREEN),
-                user32.GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                user32.GetSystemMetrics(SM_CYVIRTUALSCREEN),
-                SWP_NOACTIVATE | SWP_SHOWWINDOW)
-
-    def _hide_overlay(self):
-        if self._overlay:
-            user32.ShowWindow(self._overlay, SW_HIDE)
-
-    # -- motion streaming --
-    def _sender(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            # stop Windows raising ConnectionReset on ICMP port-unreachable
-            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
-        except (AttributeError, OSError):
-            pass
-        sock.setblocking(False)
-        addr = ('127.0.0.1', UDP_PORT)
-        interval = 1.0 / SEND_HZ
-        last_ping = 0.0
-        while self._running:
-            time.sleep(interval)
-            now = time.monotonic()
-
-            if now - last_ping > 1.0:
-                last_ping = now
-                try:
-                    sock.sendto(b'{"ping":1}', addr)
-                except OSError:
-                    pass
-            try:
-                while True:
-                    sock.recvfrom(64)
-                    self.last_ack = time.monotonic()
-            except OSError:
-                pass
-
-            if self.fly and not fusion_foreground():
-                self._stop_fly()
-
-            if self.fly:
-                # FPS-style capture by polling: cursor drift from the anchor
-                # since last tick IS the mouse delta; snap it back after.
-                cur = w.POINT()
-                user32.GetCursorPos(ctypes.byref(cur))
-                ddx = cur.x - self._anchor.x
-                ddy = cur.y - self._anchor.y
-                if ddx or ddy:
-                    with self._lock:
-                        self._accum[0] += ddx
-                        self._accum[1] += ddy
-                    user32.SetCursorPos(self._anchor.x, self._anchor.y)
-
-            with self._lock:
-                active = (self.fly or
-                          now - self._last_fly_end < 1.5)
-                if not active:
-                    continue
-                dx, dy = self._accum
-                self._accum[0] = self._accum[1] = 0.0
-                b, d = self.binds, self._down
-                tx = ((1.0 if d.get(b['pan_right']) else 0.0) -
-                      (1.0 if d.get(b['pan_left']) else 0.0))
-                ty = ((1.0 if d.get(b['pan_up']) else 0.0) -
-                      (1.0 if d.get(b['pan_down']) else 0.0))
-                tz = ((1.0 if d.get(b['zoom_in']) else 0.0) -
-                      (1.0 if d.get(b['zoom_out']) else 0.0))
-                sp = self.speed
-
-            pkt = {'tx': tx, 'ty': ty, 'tz': tz,
-                   'rx': dx * SEND_HZ, 'ry': dy * SEND_HZ,   # px/sec rates
-                   'sp': sp, 'boost': False}
-            try:
-                sock.sendto(json.dumps(pkt).encode('utf-8'), addr)
-            except OSError:
-                pass
 
 
 # ------------------------------------------------------------------- ui ----
@@ -461,10 +98,11 @@ DIM = '#8a93a3'
 OK_GREEN = '#48d17c'
 WAIT_AMBER = '#f0b45a'
 
-FONT = ('Segoe UI', 10)
-FONT_SM = ('Segoe UI', 9)
-FONT_KEY = ('Consolas', 10, 'bold')
-FONT_TITLE = ('Segoe UI Semibold', 17)
+_UIFONT = 'Segoe UI' if sys.platform != 'darwin' else 'Helvetica Neue'
+FONT = (_UIFONT, 10)
+FONT_SM = (_UIFONT, 9)
+FONT_KEY = ('Consolas' if sys.platform != 'darwin' else 'Menlo', 10, 'bold')
+FONT_TITLE = (_UIFONT, 17, 'bold')
 
 
 def draw_logo(cv, size):
@@ -528,7 +166,7 @@ class App:
 
         # bindings card
         bcard = self._card(pad)
-        tk.Label(bcard, text='KEY BINDINGS', font=('Segoe UI', 8, 'bold'),
+        tk.Label(bcard, text='KEY BINDINGS', font=(_UIFONT, 8, 'bold'),
                  fg=DIM, bg=CARD).grid(row=0, column=0, columnspan=2,
                                        sticky='w', padx=14, pady=(12, 6))
         for i, (action, label) in enumerate(ACTIONS, start=1):
@@ -536,8 +174,8 @@ class App:
                      anchor='w').grid(row=i, column=0, sticky='w',
                                       padx=(14, 20), pady=3)
             btn = tk.Button(
-                bcard, text=key_name(cfg['binds'][action]), font=FONT_KEY,
-                fg=TEXT, bg=FIELD, activebackground=FIELD_HI,
+                bcard, text=backend.key_name(cfg['binds'][action]),
+                font=FONT_KEY, fg=TEXT, bg=FIELD, activebackground=FIELD_HI,
                 activeforeground=TEXT, relief='flat', bd=0, width=14,
                 cursor='hand2', pady=3,
                 command=lambda a=action: self.begin_capture(a))
@@ -549,9 +187,9 @@ class App:
         tk.Label(bcard, text='Fly button', font=FONT, fg=TEXT, bg=CARD,
                  anchor='w').grid(row=r, column=0, sticky='w',
                                   padx=(14, 20), pady=(10, 3))
-        self.btn_var = tk.StringVar(
-            value='Forward side' if cfg['fly_button'] == 2 else 'Back side')
-        om = tk.OptionMenu(bcard, self.btn_var, 'Forward side', 'Back side',
+        labels = backend.FLY_BUTTON_LABELS
+        self.btn_var = tk.StringVar(value=labels[cfg['fly_button']])
+        om = tk.OptionMenu(bcard, self.btn_var, *labels.values(),
                            command=self.on_fly_button)
         om.configure(font=FONT, fg=TEXT, bg=FIELD, activebackground=FIELD_HI,
                      activeforeground=TEXT, relief='flat', bd=0, width=12,
@@ -587,12 +225,15 @@ class App:
         self._update_hint()
         brow = tk.Frame(foot, bg=BG)
         brow.pack(fill='x', pady=(8, 0))
-        self.auto_var = tk.BooleanVar(value=os.path.exists(startup_path()))
-        tk.Checkbutton(brow, text='Launch at Windows startup',
-                       variable=self.auto_var, command=self.on_autostart,
-                       font=FONT_SM, fg=DIM, bg=BG, activebackground=BG,
-                       activeforeground=TEXT, selectcolor=FIELD,
-                       highlightthickness=0, cursor='hand2').pack(side='left')
+        if backend.SUPPORTS_AUTOSTART:
+            self.auto_var = tk.BooleanVar(
+                value=os.path.exists(startup_path()))
+            tk.Checkbutton(brow, text='Launch at Windows startup',
+                           variable=self.auto_var, command=self.on_autostart,
+                           font=FONT_SM, fg=DIM, bg=BG, activebackground=BG,
+                           activeforeground=TEXT, selectcolor=FIELD,
+                           highlightthickness=0,
+                           cursor='hand2').pack(side='left')
         reset = tk.Label(brow, text='Reset defaults', font=FONT_SM,
                          fg=DIM, bg=BG, cursor='hand2')
         reset.pack(side='right')
@@ -602,7 +243,8 @@ class App:
 
         if engine.error:
             tk.Label(root, text=engine.error, font=FONT_SM, fg='#f56565',
-                     bg=BG, wraplength=360).pack(padx=pad, pady=(0, pad))
+                     bg=BG, wraplength=360, justify='left').pack(
+                         padx=pad, pady=(0, pad))
 
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.tick()
@@ -627,9 +269,9 @@ class App:
         return (dot, dot_id), val
 
     def _update_hint(self):
-        b = 'FORWARD' if self.engine.fly_button == 2 else 'BACK'
-        self.hint.config(text='Hold the %s side mouse button in Fusion to '
-                              'fly.  Scroll = speed, Esc = bail out.' % b)
+        b = backend.FLY_BUTTON_LABELS[self.engine.fly_button].upper()
+        self.hint.config(text='Hold the %s mouse button in Fusion to fly.  '
+                              'Scroll = speed, Esc = bail out.' % b)
 
     # -- callbacks --
     def begin_capture(self, action):
@@ -643,13 +285,13 @@ class App:
         action = self.capturing
         if action is None:
             return 'break'
-        vk = normalize_vk(event.keycode)
-        if vk != VK_ESCAPE:               # Esc cancels (it's the bail key)
+        code, is_escape = backend.tk_event_to_code(event)
+        if not is_escape and code is not None:   # Esc cancels (the bail key)
             binds = self.cfg['binds']
-            for other, other_vk in binds.items():
-                if other != action and other_vk == vk:
-                    binds[other] = binds[action]   # swap to avoid duplicates
-            binds[action] = vk
+            for other, other_code in binds.items():
+                if other != action and other_code == code:
+                    binds[other] = binds[action]  # swap to avoid duplicates
+            binds[action] = code
             self.engine.set_binds(binds)
             save_config(self.cfg)
         self.end_capture()
@@ -659,10 +301,13 @@ class App:
         self.root.unbind('<KeyPress>')
         self.capturing = None
         for action, btn in self.bind_buttons.items():
-            btn.config(text=key_name(self.cfg['binds'][action]), fg=TEXT)
+            btn.config(text=backend.key_name(self.cfg['binds'][action]),
+                       fg=TEXT)
 
     def on_fly_button(self, choice):
-        self.cfg['fly_button'] = 2 if choice == 'Forward side' else 1
+        for num, label in backend.FLY_BUTTON_LABELS.items():
+            if label == choice:
+                self.cfg['fly_button'] = num
         self.engine.fly_button = self.cfg['fly_button']
         save_config(self.cfg)
         self._update_hint()
@@ -678,14 +323,14 @@ class App:
             800, lambda: save_config(self.cfg))
 
     def on_reset(self, _event=None):
-        self.cfg['binds'] = dict(DEFAULT_CONFIG['binds'])
-        self.cfg['fly_button'] = DEFAULT_CONFIG['fly_button']
-        self.cfg['speed'] = DEFAULT_CONFIG['speed']
+        self.cfg['binds'] = dict(backend.DEFAULT_BINDS)
+        self.cfg['fly_button'] = 2
+        self.cfg['speed'] = 1.0
         self.engine.set_binds(self.cfg['binds'])
-        self.engine.fly_button = self.cfg['fly_button']
-        self.engine.speed = self.cfg['speed']
-        self.speed_var.set(self.cfg['speed'])
-        self.btn_var.set('Forward side')
+        self.engine.fly_button = 2
+        self.engine.speed = 1.0
+        self.speed_var.set(1.0)
+        self.btn_var.set(backend.FLY_BUTTON_LABELS[2])
         save_config(self.cfg)
         self.end_capture()
         self._update_hint()
@@ -738,25 +383,33 @@ def startup_path():
                         'SpaceMouseWASD.bat')
 
 
+def acquire_single_instance():
+    """Bind a localhost port as a cross-platform single-instance lock.
+    Two copies mean two sets of input hooks fighting - a reliable source
+    of glitches."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(('127.0.0.1', LOCK_PORT))
+        s.listen(1)
+        return s
+    except OSError:
+        return None
+
+
 def main():
     selftest = '--selftest' in sys.argv
 
-    # Single instance: two copies mean two sets of hooks fighting over the
-    # cursor and double-blocking keys - a reliable source of input glitches.
-    kernel32.CreateMutexW.restype = w.HANDLE
-    kernel32.CreateMutexW.argtypes = (w.LPVOID, w.BOOL, w.LPCWSTR)
-    kernel32.CreateMutexW(None, False, 'SpaceMouseWASD_SingleInstance')
-    if ctypes.get_last_error() == 183:      # ERROR_ALREADY_EXISTS
+    lock = acquire_single_instance()
+    if lock is None:
         root = tk.Tk()
         root.withdraw()
         from tkinter import messagebox
-        messagebox.showinfo(APP_NAME, APP_NAME + ' is already running.\n'
-                            'Check the taskbar or system tray.')
+        messagebox.showinfo(APP_NAME, APP_NAME + ' is already running.')
         return
 
     cfg = load_config()
     root = tk.Tk()
-    engine = Engine(cfg)
+    engine = backend.Engine(cfg)
     engine.start()
     app = App(root, engine, cfg)
     if selftest:
@@ -765,6 +418,7 @@ def main():
             app.close()
         root.after(1500, finish)
     root.mainloop()
+    lock.close()
 
 
 if __name__ == '__main__':
