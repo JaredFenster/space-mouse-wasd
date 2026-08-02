@@ -80,42 +80,26 @@ about it again.
 
 ## Install — macOS
 
-Requirements: macOS 12+ and Autodesk Fusion. **No Python, Homebrew, Tk, or
-Xcode** — the controller is a native app you download and open.
+Requirements: macOS 12+, Autodesk Fusion. No Python, Homebrew, or Xcode —
+the controller is a native app you download and open.
 
-1. **Get the app.** Download `SpaceMouseWASD-macos.zip` from the
-   [Releases page](../../releases/latest), unzip it, and drag
-   **SpaceMouseWASD.app** into your Applications folder. (It's a universal
-   build — runs on both Apple Silicon and Intel Macs.)
-2. **First launch.** Because the app isn't from the App Store, macOS
-   quarantines it. Clear that once with a single Terminal command, then open
-   the app normally afterwards:
-   ```sh
-   xattr -dr com.apple.quarantine "/Applications/SpaceMouseWASD.app"
-   ```
-   (One-time step — see [A note on Gatekeeper](#a-note-on-gatekeeper).)
-3. **Install the Fusion add-in.** Download this repo (green **Code** button →
-   Download ZIP), unzip it, and from that folder run `./install_addin.sh`.
-   Restart Fusion, then Shift+S → Add-Ins → SpaceMouseWASD → Run (tick *Run
-   on Startup*).
-4. **Grant permissions.** The first time you fly, macOS asks for
-   **Accessibility** and **Input Monitoring** (System Settings → Privacy &
-   Security). Grant both and relaunch the app — global input capture is
-   impossible without them, and the app tells you if the tap couldn't be
-   created.
+1. Download `SpaceMouseWASD-macos.zip` from the
+   [Releases page](../../releases/latest), unzip, and drag
+   **SpaceMouseWASD.app** to Applications (universal — Apple Silicon + Intel).
+2. Download this repo (green **Code** button → Download ZIP) and run
+   **`./install_addin.sh`** — copies the add-in into Fusion's add-ins folder.
+   Restart Fusion (the add-in runs on startup).
+3. Open the app. First launch is blocked as an "unidentified developer" —
+   clear the download quarantine once with
+   `xattr -dr com.apple.quarantine "/Applications/SpaceMouseWASD.app"`, then
+   reopen. macOS prompts for **Accessibility** and **Input Monitoring**
+   (System Settings → Privacy & Security); grant both and relaunch. When the
+   status card shows **Connected**, hold the forward side mouse button in
+   Fusion and fly.
 
-When the status card shows **Connected**, hold the forward side mouse button
-in Fusion and fly.
-
-### A note on Gatekeeper
-
-The released app is ad-hoc signed but not notarized, so macOS flags it as
-from an unidentified developer. The one-time `xattr` command above removes
-the download quarantine — safe for an app you trust. To skip it entirely
-(and for distributing to others), sign with an Apple **Developer ID** and
-notarize; the app then opens with a plain double-click, no warning. Details,
-plus how to build from source, are in
-[`mac-controller/README.md`](mac-controller/README.md).
+Want a plain double-click with no Terminal step? Sign with an Apple Developer
+ID and notarize — [`mac-controller/README.md`](mac-controller/README.md) covers
+that and building from source.
 
 On macOS the default zoom keys are Shift / Control, and "side buttons"
 are mouse buttons 4 and 5 (most third-party mice; drivers that remap
