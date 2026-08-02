@@ -1,0 +1,46 @@
+name: Build macOS app
+
+# Builds the native Swift controller into a universal SpaceMouseWASD.app and
+# publishes a downloadable zip — so end users never need Xcode or a toolchain.
+#
+#   • Push a version tag (v1.2.0, …)  → builds and attaches the zip to that
+#     GitHub Release (creating the release if it doesn't exist yet).
+#   • Run manually (Actions tab)      → builds and uploads the zip as a
+#     workflow artifact you can download for testing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create/upload release assets
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon runner, Xcode preinstalled
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build universal .app
+        working-directory: mac-controller
+        run: ./build_app.sh
+
+      - name: Zip the app (ditto preserves the code signature)
+        working-directory: mac-controller
+        run: ditto -c -k --keepParent SpaceMouseWASD.app SpaceMouseWASD-macos.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceMouseWASD-macos
+          path: mac-controller/SpaceMouseWASD-macos.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME" || true
+          gh release upload "$GITHUB_REF_NAME" \
+            mac-controller/SpaceMouseWASD-macos.zip --clobber

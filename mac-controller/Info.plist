@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>SpaceMouse WASD</string>
+    <key>CFBundleDisplayName</key>
+    <string>SpaceMouse WASD</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.spacemousewasd.controller</string>
+    <key>CFBundleExecutable</key>
+    <string>SpaceMouseWASD</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <!-- Global input capture needs the event tap, which macOS gates behind
+         Accessibility + Input Monitoring; these strings show in the prompts. -->
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>SpaceMouse WASD reads your mouse and keyboard only while you hold the fly button in Fusion, to drive the camera.</string>
+</dict>
+</plist>

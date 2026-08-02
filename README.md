@@ -55,8 +55,12 @@ velocity smoothing (the spacemouse "glide") and re-anchors the orbit/zoom
 pivot onto the model itself, so zooming flies toward the geometry and
 orbiting after a deep zoom rotates around what you're looking at.
 
-On Windows both parts are pure Python standard library — no packages to
-install. On macOS the controller needs `pyobjc` for the Quartz event tap.
+On Windows the controller is pure Python standard library — no packages to
+install. On macOS the controller is a **native Swift app** (in
+`mac-controller/`) that talks the same UDP protocol: zero runtime
+dependencies, no Python or Homebrew, and clean native permission prompts.
+The Fusion add-in itself is Python on both platforms — Fusion's add-in API
+requires it.
 
 ## Install — Windows
 
@@ -76,28 +80,42 @@ about it again.
 
 ## Install — macOS
 
-Requirements: macOS 12+, Autodesk Fusion, and a Python 3.9+ with **Tk 8.6 or
-newer** plus `pyobjc`.
+Requirements: macOS 12+ and Autodesk Fusion. **No Python, Homebrew, Tk, or
+Xcode** — the controller is a native app you download and open.
 
-> Apple's built-in `/usr/bin/python3` will **not** work: it links Tk 8.5.9
-> from 2010, which renders the window completely blank on modern macOS.
-> Install a Python that bundles a current Tk.
-
-1. Download and unzip the repo, then in Terminal from the repo folder:
+1. **Get the app.** Download `SpaceMouseWASD-macos.zip` from the
+   [Releases page](../../releases/latest), unzip it, and drag
+   **SpaceMouseWASD.app** into your Applications folder. (It's a universal
+   build — runs on both Apple Silicon and Intel Macs.)
+2. **First launch.** Because the app isn't from the App Store, macOS
+   quarantines it. Clear that once with a single Terminal command, then open
+   the app normally afterwards:
    ```sh
-   brew install python@3.13 python-tk@3.13
-   /opt/homebrew/bin/python3.13 -m pip install \
-       pyobjc-framework-Quartz pyobjc-framework-Cocoa
-   chmod +x install_addin.sh SpaceMouseWASD.command
-   ./install_addin.sh
+   xattr -dr com.apple.quarantine "/Applications/SpaceMouseWASD.app"
    ```
-2. Restart Fusion, then double-click **`SpaceMouseWASD.command`** — it finds
-   the first interpreter on the machine that has both a usable Tk and pyobjc,
-   so you do not have to remember which python to run it with.
-3. macOS will prompt for **Accessibility** and **Input Monitoring**
-   permission for Terminal/Python (System Settings → Privacy & Security).
-   Grant both and relaunch — global input capture is impossible without
-   them, and the app will tell you if the tap couldn't be created.
+   (One-time step — see [A note on Gatekeeper](#a-note-on-gatekeeper).)
+3. **Install the Fusion add-in.** Download this repo (green **Code** button →
+   Download ZIP), unzip it, and from that folder run `./install_addin.sh`.
+   Restart Fusion, then Shift+S → Add-Ins → SpaceMouseWASD → Run (tick *Run
+   on Startup*).
+4. **Grant permissions.** The first time you fly, macOS asks for
+   **Accessibility** and **Input Monitoring** (System Settings → Privacy &
+   Security). Grant both and relaunch the app — global input capture is
+   impossible without them, and the app tells you if the tap couldn't be
+   created.
+
+When the status card shows **Connected**, hold the forward side mouse button
+in Fusion and fly.
+
+### A note on Gatekeeper
+
+The released app is ad-hoc signed but not notarized, so macOS flags it as
+from an unidentified developer. The one-time `xattr` command above removes
+the download quarantine — safe for an app you trust. To skip it entirely
+(and for distributing to others), sign with an Apple **Developer ID** and
+notarize; the app then opens with a plain double-click, no warning. Details,
+plus how to build from source, are in
+[`mac-controller/README.md`](mac-controller/README.md).
 
 On macOS the default zoom keys are Shift / Control, and "side buttons"
 are mouse buttons 4 and 5 (most third-party mice; drivers that remap
@@ -154,25 +172,27 @@ After editing, re-run `install_addin.bat` and restart the add-in
   so roll stays at zero; update the add-in. If the *axis* itself is wrong
   (orbit spins around the wrong direction), pin `ORBIT_UP_AXIS` to `'y'` or
   `'z'` in the add-in.
-- **Blank window on macOS** — you're on a Python whose Tk is 8.5.9 (Apple's
-  `/usr/bin/python3`). Launch via `SpaceMouseWASD.command`, which finds a
-  usable interpreter, or install one via Homebrew (see Install — macOS).
+- **Nothing happens after granting permission on macOS** — TCC ties the
+  grant to the exact signed app; rebuilding with `build_app.sh` ad-hoc-signs
+  it, so if a rebuild's identity changes you may need to remove and re-add
+  SpaceMouse WASD under Accessibility / Input Monitoring, then relaunch.
 - **Fusion window not detected** — the controller matches the foreground
   window/app name against `Fusion`; if Autodesk renames it, update
-  `WINDOW_MATCH` in `controller/backend_win.py` (Windows) or `APP_MATCH`
-  in `controller/backend_mac.py` (macOS).
+  `WINDOW_MATCH` in `controller/backend_win.py` (Windows) or the `Fusion`
+  match in `mac-controller/Sources/SpaceMouseWASD/Engine.swift` (macOS).
 
 ## Repo layout
 
 ```
 addin/SpaceMouseWASD/           Fusion add-in (camera driver, cross-platform)
-controller/spacemouse_wasd.py   Controller app (UI + config)
+mac-controller/                 macOS controller — native Swift app (build_app.sh)
+controller/spacemouse_wasd.py   Windows controller app (UI + config)
 controller/engine_base.py       Shared engine core (state + UDP streaming)
 controller/backend_win.py       Windows input backend (ctypes LL hooks)
-controller/backend_mac.py       macOS input backend (Quartz event tap)
+controller/backend_mac.py       Legacy macOS input backend (Quartz, Python)
 assets/                         Logo and icon
 scripts/gen_icon.py             Regenerates assets/icon.png
-SpaceMouseWASD.bat / .command   Launch the controller app (Win / mac)
+SpaceMouseWASD.bat              Launch the controller app (Windows)
 install_addin.bat / .sh         Install/update the Fusion add-in (Win / mac)
 ```
 
