@@ -149,10 +149,11 @@ After editing, re-run `install_addin.bat` and restart the add-in
   the Fly trigger to *Key combo* in the app and use the shortcut your mouse
   software sends.
 - **Wrong orbit/zoom direction** — flip the `INVERT_*` flags in the add-in.
-- **Orbit tilts the horizon / feels like free orbit** — the turntable axis
-  is auto-detected from the camera since add-in v1.3.1; update the add-in.
-  If your setup still fights it, pin `ORBIT_UP_AXIS` to `'y'` or `'z'` in
-  the add-in.
+- **Orbit tilts the horizon / feels like free orbit** — fixed in add-in
+  v1.3.2, which rebuilds the camera frame from the world up axis every frame
+  so roll stays at zero; update the add-in. If the *axis* itself is wrong
+  (orbit spins around the wrong direction), pin `ORBIT_UP_AXIS` to `'y'` or
+  `'z'` in the add-in.
 - **Blank window on macOS** — you're on a Python whose Tk is 8.5.9 (Apple's
   `/usr/bin/python3`). Launch via `SpaceMouseWASD.command`, which finds a
   usable interpreter, or install one via Homebrew (see Install — macOS).

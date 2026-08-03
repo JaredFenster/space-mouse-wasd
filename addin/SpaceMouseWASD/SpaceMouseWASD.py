@@ -130,6 +130,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
         self.orbVel = [0.0, 0.0]        # smoothed orbit rates, px/sec
         self.wheelVel = 0.0             # decaying wheel-zoom impulse
         self.lastT = None
+        self.upAxis = None              # latched per fly session (see _applyCamera)
 
     def notify(self, args):
         global _pending
@@ -174,6 +175,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                 self.vel = [0.0, 0.0, 0.0]
                 self.orbVel = [0.0, 0.0]
                 self.wheelVel = 0.0
+                self.upAxis = None      # re-detect on the next fly session
                 return
 
             self._applyCamera(dt)
@@ -211,7 +213,11 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                                                eye.z + fwd.z * s)
                 dist = s
 
-        upAxis = _modelUpAxis(up)
+        # latch the axis for the whole fly session: re-detecting every frame
+        # lets it flip mid-orbit near a pole, which snaps the horizon
+        if self.upAxis is None:
+            self.upAxis = _modelUpAxis(up)
+        upAxis = self.upAxis
 
         # ---- orbit (turntable: yaw about world up through target, pitch about
         # camera-right through target, clamped near the poles) ----
@@ -228,7 +234,10 @@ class NavEventHandler(adsk.core.CustomEventHandler):
             fwd = eye.vectorTo(tgt)
             fwd.scaleBy(1.0 / max(fwd.length, 1e-12))
 
-        right = fwd.crossProduct(up)
+        # pitch about the *level* right vector, so pitching never adds roll
+        right = fwd.crossProduct(upAxis)
+        if right.length < 1e-6:
+            right = fwd.crossProduct(up)
         if right.length < 1e-9:
             return
         right.normalize()
@@ -247,7 +256,14 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                     up.transformBy(m)
                     fwd = newFwd
 
-        right = fwd.crossProduct(up)
+        # ---- constrained orbit: rebuild the frame from the world up axis so
+        # roll is always exactly zero. Deriving it from the camera's own up
+        # instead carries any existing tilt forever, and pitching about a
+        # rolled right-vector adds more of it every frame - which is what made
+        # this feel like free orbit. ----
+        right = fwd.crossProduct(upAxis)
+        if right.length < 1e-6:
+            right = fwd.crossProduct(up)    # looking down the axis: keep roll
         right.normalize()
         trueUp = right.crossProduct(fwd)
         trueUp.normalize()
