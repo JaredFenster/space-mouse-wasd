@@ -4,9 +4,9 @@
     "id": "b7f3c2a1-9e4d-4f6b-8a2c-5d1e0f7a6b39",
     "author": "Jared Fenster",
     "description": {
-        "": "Spacemouse-style smooth navigation using CapsLock + WASD + mouse. Works with the companion controller.py script."
+        "": "Spacemouse-style fly-through navigation: hold a side mouse button to orbit with the mouse and glide with WASD. Works with the SpaceMouse WASD controller app."
     },
-    "version": "1.0.0",
+    "version": "1.2.0",
     "runOnStartup": true,
     "supportedOS": "windows|mac",
     "editEnabled": true
