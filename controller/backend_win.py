@@ -296,7 +296,7 @@ class Engine(BaseEngine):
                     elif wParam == WM_MOUSEWHEEL and self.fly:
                         delta = ctypes.c_short(
                             (ms.mouseData >> 16) & 0xFFFF).value
-                        self.adjust_speed(1.15 ** (delta / 120.0))
+                        self.wheel_input(delta / 120.0)
                         return 1
         except Exception:
             pass

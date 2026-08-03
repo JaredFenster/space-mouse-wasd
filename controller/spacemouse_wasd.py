@@ -26,7 +26,7 @@ else:
 from engine_base import SPEED_MIN, SPEED_MAX
 
 APP_NAME = 'SpaceMouse WASD'
-VERSION = '1.2.0'
+VERSION = '1.3.0'
 LOCK_PORT = 42739         # single-instance guard (bound while app runs)
 if sys.platform == 'darwin':
     CONFIG_DIR = os.path.expanduser(
@@ -40,6 +40,7 @@ ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 BINDS_KEY = 'binds_mac' if sys.platform == 'darwin' else 'binds_win'
 COMBO_KEY = 'combo_mac' if sys.platform == 'darwin' else 'combo_win'
 COMBO_LABEL = 'Key combo'
+SCROLL_LABELS = {'speed': 'Adjust speed', 'zoom': 'Zoom'}
 MOD_ORDER = ('ctrl', 'alt', 'shift')
 MOD_TITLES = {'ctrl': 'Ctrl', 'alt': 'Alt', 'shift': 'Shift'}
 
@@ -63,7 +64,7 @@ ACTIONS = [
 def load_config():
     cfg = {'binds': dict(backend.DEFAULT_BINDS), 'fly_button': 2,
            'trigger_type': 'button', 'combo': dict(backend.DEFAULT_COMBO),
-           'speed': 1.0}
+           'scroll_mode': 'speed', 'speed': 1.0}
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             saved = json.load(f)
@@ -78,6 +79,8 @@ def load_config():
             cfg['fly_button'] = saved['fly_button']
         if saved.get('trigger_type') in ('button', 'combo'):
             cfg['trigger_type'] = saved['trigger_type']
+        if saved.get('scroll_mode') in ('speed', 'zoom'):
+            cfg['scroll_mode'] = saved['scroll_mode']
         combo = saved.get(COMBO_KEY)
         if (isinstance(combo, dict) and isinstance(combo.get('code'), int)
                 and isinstance(combo.get('mods'), list)):
@@ -98,7 +101,8 @@ def load_config():
 def save_config(cfg):
     out = {BINDS_KEY: cfg['binds'], COMBO_KEY: cfg['combo'],
            'trigger_type': cfg['trigger_type'],
-           'fly_button': cfg['fly_button'], 'speed': cfg['speed']}
+           'fly_button': cfg['fly_button'],
+           'scroll_mode': cfg['scroll_mode'], 'speed': cfg['speed']}
     out.update(cfg.get('_other_os', {}))    # keep the other OS's settings
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -368,6 +372,15 @@ class App:
             self.combo_btn.grid_remove()
 
         r += 1
+        tk.Label(bcard, text='Scroll wheel', font=FONT, fg=TEXT, bg=CARD,
+                 anchor='w').grid(row=r, column=0, sticky='w',
+                                  padx=(14, 20), pady=3)
+        self.scroll_dd = Dropdown(
+            bcard, list(SCROLL_LABELS.values()),
+            SCROLL_LABELS[cfg['scroll_mode']], self.on_scroll_mode)
+        self.scroll_dd.grid(row=r, column=1, sticky='e', padx=(0, 14), pady=3)
+
+        r += 1
         srow = tk.Frame(bcard, bg=CARD)
         srow.grid(row=r, column=0, columnspan=2, sticky='ew',
                   padx=14, pady=(6, 12))
@@ -438,8 +451,9 @@ class App:
         else:
             what = ('the %s mouse button' %
                     backend.FLY_BUTTON_LABELS[self.engine.fly_button].upper())
+        scroll = ('zoom' if self.engine.scroll_mode == 'zoom' else 'speed')
         self.hint.config(text='Hold %s in Fusion to fly.  '
-                              'Scroll = speed, Esc = bail out.' % what)
+                              'Scroll = %s, Esc = bail out.' % (what, scroll))
 
     # -- callbacks --
     def begin_capture(self, action):
@@ -489,6 +503,14 @@ class App:
         save_config(self.cfg)
         self._update_hint()
 
+    def on_scroll_mode(self, choice):
+        for mode, label in SCROLL_LABELS.items():
+            if label == choice:
+                self.cfg['scroll_mode'] = mode
+        self.engine.scroll_mode = self.cfg['scroll_mode']
+        save_config(self.cfg)
+        self._update_hint()
+
     def begin_combo_capture(self):
         if self.capturing:
             self.end_capture()
@@ -526,12 +548,15 @@ class App:
         self.cfg['fly_button'] = 2
         self.cfg['trigger_type'] = 'button'
         self.cfg['combo'] = dict(backend.DEFAULT_COMBO)
+        self.cfg['scroll_mode'] = 'speed'
         self.cfg['speed'] = 1.0
         self.engine.set_binds(self.cfg['binds'])
         self.engine.fly_button = 2
         self.engine.trigger_type = 'button'
         self.engine.combo_code = self.cfg['combo']['code']
         self.engine.combo_mods = list(self.cfg['combo']['mods'])
+        self.engine.scroll_mode = 'speed'
+        self.scroll_dd.set(SCROLL_LABELS['speed'])
         self.engine.speed = 1.0
         self.speed_slider.set(1.0)
         self.speed_lbl.config(text='x%.2f' % 1.0)

@@ -22,6 +22,9 @@ ORBIT_SENS = 0.005        # radians of orbit per pixel of mouse movement
 BOOST_MULT = 3.0          # Shift multiplier
 TAU_MOVE = 0.12           # smoothing time-constant for pan/zoom (bigger = floatier)
 TAU_ORBIT = 0.06          # smoothing time-constant for orbit
+WHEEL_ZOOM_KICK = 0.7     # zoom impulse per wheel notch (scroll-zoom mode)
+WHEEL_TAU = 0.15          # how quickly a wheel-zoom impulse glides out
+INVERT_WHEEL_ZOOM = False  # False: scroll up = zoom in
 MIN_DIST = 0.05           # closest allowed eye-to-target distance, cm
 INVERT_ORBIT_X = False    # flip horizontal orbit direction
 INVERT_ORBIT_Y = False    # flip vertical orbit direction
@@ -114,6 +117,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
         super().__init__()
         self.vel = [0.0, 0.0, 0.0]      # smoothed tx, ty, tz (unitless -1..1-ish)
         self.orbVel = [0.0, 0.0]        # smoothed orbit rates, px/sec
+        self.wheelVel = 0.0             # decaying wheel-zoom impulse
         self.lastT = None
 
     def notify(self, args):
@@ -148,10 +152,17 @@ class NavEventHandler(adsk.core.CustomEventHandler):
             for i in range(2):
                 self.orbVel[i] += (tgtOrb[i] - self.orbVel[i]) * aO
 
+            # wheel zoom: each notch is a velocity kick that glides out
+            wz = pkt.get('wz', 0.0) * (-1.0 if INVERT_WHEEL_ZOOM else 1.0)
+            self.wheelVel += wz * WHEEL_ZOOM_KICK
+            self.wheelVel *= math.exp(-dt / WHEEL_TAU)
+
             if (max(abs(v) for v in self.vel) < 1e-4 and
-                    max(abs(v) for v in self.orbVel) < 0.05):
+                    max(abs(v) for v in self.orbVel) < 0.05 and
+                    abs(self.wheelVel) < 1e-3):
                 self.vel = [0.0, 0.0, 0.0]
                 self.orbVel = [0.0, 0.0]
+                self.wheelVel = 0.0
                 return
 
             self._applyCamera(dt)
@@ -245,8 +256,8 @@ class NavEventHandler(adsk.core.CustomEventHandler):
             eye.translateBy(off)
             tgt.translateBy(off)
 
-        # ---- dolly / zoom (W/S, exponential toward target) ----
-        vz = self.vel[2] * (-1.0 if INVERT_ZOOM else 1.0)
+        # ---- dolly / zoom (keys + wheel impulse, exponential toward target) ----
+        vz = self.vel[2] * (-1.0 if INVERT_ZOOM else 1.0) + self.wheelVel
         if abs(vz) > 1e-6:
             f = math.exp(-vz * DOLLY_SPEED * dt)
             if isOrtho:

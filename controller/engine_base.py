@@ -25,6 +25,8 @@ class BaseEngine:
         self.combo_mods = list(combo.get('mods', []))
         self.speed = cfg['speed']
         self.speed_dirty = False              # set when wheel changes speed
+        self.scroll_mode = cfg.get('scroll_mode', 'speed')   # or 'zoom'
+        self._wheel = 0.0                     # zoom notches since last packet
         self.fly = False
         self.last_ack = 0.0
         self.error = None
@@ -79,6 +81,15 @@ class BaseEngine:
         with self._lock:
             self.speed = min(max(self.speed * factor, SPEED_MIN), SPEED_MAX)
             self.speed_dirty = True
+
+    def wheel_input(self, notches):
+        """Scroll wheel during fly: speed multiplier or zoom impulse,
+        depending on the configured scroll mode."""
+        if self.scroll_mode == 'zoom':
+            with self._lock:
+                self._wheel += notches
+        else:
+            self.adjust_speed(1.15 ** notches)
 
     # -- fly mode --
     def _start_fly(self):
@@ -137,6 +148,8 @@ class BaseEngine:
                     continue
                 dx, dy = self._accum
                 self._accum[0] = self._accum[1] = 0.0
+                wz = self._wheel
+                self._wheel = 0.0
                 b, d = self.binds, self._down
                 tx = ((1.0 if d.get(b['pan_right']) else 0.0) -
                       (1.0 if d.get(b['pan_left']) else 0.0))
@@ -148,6 +161,7 @@ class BaseEngine:
 
             pkt = {'tx': tx, 'ty': ty, 'tz': tz,
                    'rx': dx * SEND_HZ, 'ry': dy * SEND_HZ,   # px/sec rates
+                   'wz': wz,                                 # wheel zoom notches
                    'sp': sp, 'boost': False}
             try:
                 sock.sendto(json.dumps(pkt).encode('utf-8'), addr)

@@ -32,7 +32,7 @@ instantly back to normal.
 | **W / S** | Pan up / down |
 | **A / D** | Pan left / right |
 | **Shift / Ctrl** | Zoom in / out (smooth dolly toward the model) |
-| **Scroll wheel** | Adjust speed on the fly |
+| **Scroll wheel** | Adjust speed — or zoom, switchable in the app |
 | **Esc** | Bail out of fly mode |
 
 ## How it works
@@ -112,6 +112,10 @@ them to gestures may need those remaps disabled).
 Everything lives in the app: click any key button and press a new key to
 rebind, pick which side button activates fly mode, and drag the speed
 slider.
+
+The **scroll wheel** during flight either adjusts speed (default) or zooms
+like regular Fusion — pick in the Scroll wheel dropdown. (Wheel zoom needs
+add-in v1.3.0+; re-run the installer if you're upgrading.)
 
 The fly trigger can also be a **key combo** (e.g. Ctrl+Alt+L) instead of a
 side button — pick *Key combo* in the Fly trigger dropdown and press your

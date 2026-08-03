@@ -333,7 +333,7 @@ class Engine(BaseEngine):
                 delta = Quartz.CGEventGetIntegerValueField(
                     event, Quartz.kCGScrollWheelEventDeltaAxis1)
                 if delta:
-                    self.adjust_speed(1.15 ** (1 if delta > 0 else -1))
+                    self.wheel_input(1.0 if delta > 0 else -1.0)
                 return None
         except Exception:
             pass
