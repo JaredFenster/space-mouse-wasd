@@ -29,6 +29,9 @@ MIN_DIST = 0.05           # closest allowed eye-to-target distance, cm
 INVERT_ORBIT_X = False    # flip horizontal orbit direction
 INVERT_ORBIT_Y = False    # flip vertical orbit direction
 INVERT_ZOOM = False       # flip W/S
+ORBIT_UP_AXIS = 'auto'    # turntable axis: 'auto' | 'x' | 'y' | 'z'
+                          # auto = world axis nearest the camera's current up,
+                          # which tracks each document's actual orientation
 # ----------------------------------------------------------------------------
 
 EVENT_ID = 'SpaceMouseWASD_navEvent'
@@ -52,15 +55,23 @@ def _log(msg):
         pass
 
 
-def _modelUpAxis():
-    """World 'up' used for turntable orbit, from the user's modeling-orientation pref."""
-    try:
-        pref = _app.preferences.generalPreferences.defaultModelingOrientation
-        if pref == adsk.core.DefaultModelingOrientations.YUpModelingOrientation:
-            return adsk.core.Vector3D.create(0.0, 1.0, 0.0)
-    except Exception:
-        pass
-    return adsk.core.Vector3D.create(0.0, 0.0, 1.0)
+def _modelUpAxis(camUp):
+    """World 'up' used for turntable orbit.
+
+    'auto' picks the world axis nearest the camera's current up vector. The
+    global modeling-orientation *preference* is unreliable here: it only sets
+    the default for new documents, so a Z-up document under a Y-up preference
+    (or any imported file) would yaw around the wrong axis - which tilts the
+    horizon and makes constrained orbit feel like free orbit."""
+    if ORBIT_UP_AXIS in ('x', 'y', 'z'):
+        i = 'xyz'.index(ORBIT_UP_AXIS)
+    else:
+        comps = (camUp.x, camUp.y, camUp.z)
+        i = max(range(3), key=lambda n: abs(comps[n]))
+    v = [0.0, 0.0, 0.0]
+    comps = (camUp.x, camUp.y, camUp.z)
+    v[i] = -1.0 if comps[i] < 0 else 1.0   # keep working upside-down
+    return adsk.core.Vector3D.create(*v)
 
 
 _bboxCache = {'t': -1e9, 'pt': None}
@@ -200,7 +211,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                                                eye.z + fwd.z * s)
                 dist = s
 
-        upAxis = _modelUpAxis()
+        upAxis = _modelUpAxis(up)
 
         # ---- orbit (turntable: yaw about world up through target, pitch about
         # camera-right through target, clamped near the poles) ----
