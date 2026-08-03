@@ -19,6 +19,10 @@ class BaseEngine:
     def __init__(self, cfg, binds):
         self.binds = dict(binds)
         self.fly_button = cfg['fly_button']   # 1 = back side, 2 = forward side
+        self.trigger_type = cfg.get('trigger_type', 'button')  # or 'combo'
+        combo = cfg.get('combo') or {}
+        self.combo_code = combo.get('code')
+        self.combo_mods = list(combo.get('mods', []))
         self.speed = cfg['speed']
         self.speed_dirty = False              # set when wheel changes speed
         self.fly = False

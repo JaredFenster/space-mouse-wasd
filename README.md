@@ -27,7 +27,7 @@ instantly back to normal.
 
 | Input | Action |
 |---|---|
-| **Hold forward side button** | Enter fly mode |
+| **Hold forward side button** | Enter fly mode (or a key combo — see below) |
 | **Mouse** | Orbit around the model |
 | **W / S** | Pan up / down |
 | **A / D** | Pan left / right |
@@ -111,7 +111,13 @@ them to gestures may need those remaps disabled).
 
 Everything lives in the app: click any key button and press a new key to
 rebind, pick which side button activates fly mode, and drag the speed
-slider. Settings persist per-platform to
+slider.
+
+The fly trigger can also be a **key combo** (e.g. Ctrl+Alt+L) instead of a
+side button — pick *Key combo* in the Fly trigger dropdown and press your
+combo. This is the right choice if your mouse software (Logitech Options+,
+Razer Synapse, ...) remaps side buttons to keyboard shortcuts: those arrive
+as synthetic keystrokes, which the combo trigger deliberately accepts. Settings persist per-platform to
 `%APPDATA%\SpaceMouseWASD\config.json` on Windows and
 `~/Library/Application Support/SpaceMouseWASD/config.json` on macOS.
 
@@ -134,8 +140,10 @@ After editing, re-run `install_addin.bat` and restart the add-in
   Fusion: Shift+S → Add-Ins tab → SpaceMouseWASD → Run (tick *Run on
   Startup*). The add-in logs to Fusion's Text Commands palette.
 - **Side button doesn't trigger fly mode** — some mouse drivers remap side
-  buttons; set them to default "Back"/"Forward" in your mouse software, or
-  switch the fly button in the app.
+  buttons to keyboard shortcuts instead of real button events. Either set
+  them back to default "Back"/"Forward" in your mouse software, or switch
+  the Fly trigger to *Key combo* in the app and use the shortcut your mouse
+  software sends.
 - **Wrong orbit/zoom direction** — flip the `INVERT_*` flags in the add-in.
 - **Blank window on macOS** — you're on a Python whose Tk is 8.5.9 (Apple's
   `/usr/bin/python3`). Launch via `SpaceMouseWASD.command`, which finds a
@@ -163,6 +171,10 @@ install_addin.bat / .sh         Install/update the Fusion add-in (Win / mac)
 
 macOS testing and fixes: Devansh Gaur — dragged-event capture, background
 cursor hiding, and the cross-platform custom widgets.
+
+Key-combo trigger for remapped mouse buttons: prompted by
+[#1](../../issues/1) from TMTYD, including the diagnosis that injected
+keystrokes from mouse drivers were being filtered out.
 
 ## License
 

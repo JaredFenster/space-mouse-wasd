@@ -26,7 +26,7 @@ else:
 from engine_base import SPEED_MIN, SPEED_MAX
 
 APP_NAME = 'SpaceMouse WASD'
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 LOCK_PORT = 42739         # single-instance guard (bound while app runs)
 if sys.platform == 'darwin':
     CONFIG_DIR = os.path.expanduser(
@@ -38,6 +38,16 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          '..', 'assets')
 BINDS_KEY = 'binds_mac' if sys.platform == 'darwin' else 'binds_win'
+COMBO_KEY = 'combo_mac' if sys.platform == 'darwin' else 'combo_win'
+COMBO_LABEL = 'Key combo'
+MOD_ORDER = ('ctrl', 'alt', 'shift')
+MOD_TITLES = {'ctrl': 'Ctrl', 'alt': 'Alt', 'shift': 'Shift'}
+
+
+def combo_label(combo):
+    parts = [MOD_TITLES[m] for m in MOD_ORDER if m in combo.get('mods', [])]
+    parts.append(backend.key_name(combo['code']))
+    return '+'.join(parts)
 
 ACTIONS = [
     ('pan_up', 'Pan up'),
@@ -52,6 +62,7 @@ ACTIONS = [
 # --------------------------------------------------------------- config ----
 def load_config():
     cfg = {'binds': dict(backend.DEFAULT_BINDS), 'fly_button': 2,
+           'trigger_type': 'button', 'combo': dict(backend.DEFAULT_COMBO),
            'speed': 1.0}
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -65,20 +76,30 @@ def load_config():
                 cfg['binds'][k] = v
         if saved.get('fly_button') in (1, 2):
             cfg['fly_button'] = saved['fly_button']
+        if saved.get('trigger_type') in ('button', 'combo'):
+            cfg['trigger_type'] = saved['trigger_type']
+        combo = saved.get(COMBO_KEY)
+        if (isinstance(combo, dict) and isinstance(combo.get('code'), int)
+                and isinstance(combo.get('mods'), list)):
+            cfg['combo'] = {'code': combo['code'],
+                            'mods': [m for m in combo['mods']
+                                     if m in MOD_ORDER]}
         sp = saved.get('speed')
         if isinstance(sp, (int, float)):
             cfg['speed'] = min(max(float(sp), SPEED_MIN), SPEED_MAX)
-        cfg['_other_binds'] = {k: v for k, v in saved.items()
-                              if k.startswith('binds_') and k != BINDS_KEY}
+        cfg['_other_os'] = {k: v for k, v in saved.items()
+                            if k.startswith(('binds_', 'combo_')) and
+                            k not in (BINDS_KEY, COMBO_KEY)}
     except (OSError, ValueError):
         pass
     return cfg
 
 
 def save_config(cfg):
-    out = {BINDS_KEY: cfg['binds'], 'fly_button': cfg['fly_button'],
-           'speed': cfg['speed']}
-    out.update(cfg.get('_other_binds', {}))    # keep the other OS's binds
+    out = {BINDS_KEY: cfg['binds'], COMBO_KEY: cfg['combo'],
+           'trigger_type': cfg['trigger_type'],
+           'fly_button': cfg['fly_button'], 'speed': cfg['speed']}
+    out.update(cfg.get('_other_os', {}))    # keep the other OS's settings
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
@@ -323,14 +344,28 @@ class App:
         bcard.grid_columnconfigure(0, weight=1)
 
         r = len(ACTIONS) + 1
-        tk.Label(bcard, text='Fly button', font=FONT, fg=TEXT, bg=CARD,
+        tk.Label(bcard, text='Fly trigger', font=FONT, fg=TEXT, bg=CARD,
                  anchor='w').grid(row=r, column=0, sticky='w',
                                   padx=(14, 20), pady=(10, 3))
         labels = backend.FLY_BUTTON_LABELS
-        self.fly_dd = Dropdown(bcard, list(labels.values()),
-                               labels[cfg['fly_button']], self.on_fly_button)
+        current = (COMBO_LABEL if cfg['trigger_type'] == 'combo'
+                   else labels[cfg['fly_button']])
+        self.fly_dd = Dropdown(bcard, list(labels.values()) + [COMBO_LABEL],
+                               current, self.on_fly_button)
         self.fly_dd.grid(row=r, column=1, sticky='e', padx=(0, 14),
                          pady=(10, 3))
+
+        r += 1
+        self.combo_row_lbl = tk.Label(bcard, text='Trigger keys', font=FONT,
+                                      fg=TEXT, bg=CARD, anchor='w')
+        self.combo_row_lbl.grid(row=r, column=0, sticky='w',
+                                padx=(14, 20), pady=3)
+        self.combo_btn = FlatButton(bcard, text=combo_label(cfg['combo']),
+                                    command=self.begin_combo_capture)
+        self.combo_btn.grid(row=r, column=1, sticky='e', padx=(0, 14), pady=3)
+        if cfg['trigger_type'] != 'combo':
+            self.combo_row_lbl.grid_remove()
+            self.combo_btn.grid_remove()
 
         r += 1
         srow = tk.Frame(bcard, bg=CARD)
@@ -398,9 +433,13 @@ class App:
         return (dot, dot_id), val
 
     def _update_hint(self):
-        b = backend.FLY_BUTTON_LABELS[self.engine.fly_button].upper()
-        self.hint.config(text='Hold the %s mouse button in Fusion to fly.  '
-                              'Scroll = speed, Esc = bail out.' % b)
+        if self.engine.trigger_type == 'combo':
+            what = combo_label(self.cfg['combo'])
+        else:
+            what = ('the %s mouse button' %
+                    backend.FLY_BUTTON_LABELS[self.engine.fly_button].upper())
+        self.hint.config(text='Hold %s in Fusion to fly.  '
+                              'Scroll = speed, Esc = bail out.' % what)
 
     # -- callbacks --
     def begin_capture(self, action):
@@ -434,12 +473,43 @@ class App:
                        fg=TEXT)
 
     def on_fly_button(self, choice):
-        for num, label in backend.FLY_BUTTON_LABELS.items():
-            if label == choice:
-                self.cfg['fly_button'] = num
-        self.engine.fly_button = self.cfg['fly_button']
+        if choice == COMBO_LABEL:
+            self.cfg['trigger_type'] = 'combo'
+            self.combo_row_lbl.grid()
+            self.combo_btn.grid()
+        else:
+            self.cfg['trigger_type'] = 'button'
+            self.combo_row_lbl.grid_remove()
+            self.combo_btn.grid_remove()
+            for num, label in backend.FLY_BUTTON_LABELS.items():
+                if label == choice:
+                    self.cfg['fly_button'] = num
+            self.engine.fly_button = self.cfg['fly_button']
+        self.engine.trigger_type = self.cfg['trigger_type']
         save_config(self.cfg)
         self._update_hint()
+
+    def begin_combo_capture(self):
+        if self.capturing:
+            self.end_capture()
+        self.combo_btn.config(text='press combo...', fg=ACCENT)
+        self.root.bind('<KeyPress>', self.on_capture_combo)
+
+    def on_capture_combo(self, event):
+        sym = event.keysym.lower()
+        if sym.startswith(('shift', 'control', 'alt', 'option', 'meta',
+                           'caps', 'super', 'win')):
+            return 'break'          # a bare modifier: wait for the real key
+        code, is_escape = backend.tk_event_to_code(event)
+        if not is_escape and code is not None:   # Esc cancels
+            self.cfg['combo'] = {'code': code, 'mods': backend.held_mods()}
+            self.engine.combo_code = code
+            self.engine.combo_mods = list(self.cfg['combo']['mods'])
+            save_config(self.cfg)
+        self.root.unbind('<KeyPress>')
+        self.combo_btn.config(text=combo_label(self.cfg['combo']), fg=TEXT)
+        self._update_hint()
+        return 'break'
 
     def on_speed(self, value):
         v = float(value)
@@ -454,13 +524,21 @@ class App:
     def on_reset(self, _event=None):
         self.cfg['binds'] = dict(backend.DEFAULT_BINDS)
         self.cfg['fly_button'] = 2
+        self.cfg['trigger_type'] = 'button'
+        self.cfg['combo'] = dict(backend.DEFAULT_COMBO)
         self.cfg['speed'] = 1.0
         self.engine.set_binds(self.cfg['binds'])
         self.engine.fly_button = 2
+        self.engine.trigger_type = 'button'
+        self.engine.combo_code = self.cfg['combo']['code']
+        self.engine.combo_mods = list(self.cfg['combo']['mods'])
         self.engine.speed = 1.0
         self.speed_slider.set(1.0)
         self.speed_lbl.config(text='x%.2f' % 1.0)
         self.fly_dd.set(backend.FLY_BUTTON_LABELS[2])
+        self.combo_btn.config(text=combo_label(self.cfg['combo']), fg=TEXT)
+        self.combo_row_lbl.grid_remove()
+        self.combo_btn.grid_remove()
         save_config(self.cfg)
         self.end_capture()
         self._update_hint()

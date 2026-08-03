@@ -44,8 +44,17 @@ WINDOW_MATCH = ('Autodesk Fusion', 'Fusion 360')
 DEFAULT_BINDS = {'pan_up': 0x57, 'pan_down': 0x53,        # W / S
                  'pan_left': 0x41, 'pan_right': 0x44,     # A / D
                  'zoom_in': 0x10, 'zoom_out': 0x11}       # Shift / Ctrl
+DEFAULT_COMBO = {'code': 0x4C, 'mods': ['ctrl', 'alt']}   # Ctrl+Alt+L
 FLY_BUTTON_LABELS = {2: 'Forward side', 1: 'Back side'}
 SUPPORTS_AUTOSTART = True
+
+MOD_VKS = {'shift': 0x10, 'ctrl': 0x11, 'alt': 0x12}
+
+
+def held_mods():
+    """Modifier keys physically (or synthetically) held right now."""
+    return [m for m, vk in MOD_VKS.items()
+            if user32.GetAsyncKeyState(vk) & 0x8000]
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -205,12 +214,36 @@ class Engine(BaseEngine):
     # -- hooks --
     def _kb_hook(self, nCode, wParam, lParam):
         try:
-            if nCode == 0 and self.fly:
+            if nCode == 0 and (self.fly or self.trigger_type == 'combo'):
                 ks = ctypes.cast(lParam,
                                  ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                if not (ks.flags & LLKHF_INJECTED):
-                    vk = normalize_vk(ks.vkCode)
-                    if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                down = wParam in (WM_KEYDOWN, WM_SYSKEYDOWN)
+                vk = normalize_vk(ks.vkCode)
+
+                # Key-combo fly trigger. Injected events are deliberately
+                # accepted on this path: mouse drivers (Logitech Options+
+                # etc.) remap side buttons to *synthetic* keystrokes, which
+                # Windows flags LLKHF_INJECTED - filtering them out locks
+                # those users out entirely (GitHub issue #1, thanks TMTYD).
+                if self.trigger_type == 'combo' and vk == self.combo_code:
+                    if down:
+                        if self.fly:
+                            return 1              # swallow auto-repeat
+                        if (self._mods_held() and self.fusion_foreground()):
+                            self._start_fly()
+                            return 1
+                        # combo not satisfied: fall through so the bare key
+                        # still types normally in Fusion
+                    elif self.fly:
+                        # Stop on trigger-key release *regardless* of
+                        # modifier state - requiring the modifiers here
+                        # leaves fly mode stuck on if they're released
+                        # before the trigger key.
+                        self._stop_fly()
+                        return 1
+
+                if self.fly and not (ks.flags & LLKHF_INJECTED):
+                    if down:
                         if vk in self._bound:
                             with self._lock:
                                 self._down[vk] = True
@@ -229,6 +262,10 @@ class Engine(BaseEngine):
             pass
         return user32.CallNextHookEx(None, nCode, wParam, lParam)
 
+    def _mods_held(self):
+        return all(user32.GetAsyncKeyState(MOD_VKS[m]) & 0x8000
+                   for m in self.combo_mods)
+
     def _ms_hook(self, nCode, wParam, lParam):
         try:
             # Fast-path: bail before any ctypes work unless this is an event
@@ -242,15 +279,18 @@ class Engine(BaseEngine):
                                  ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                 if not (ms.flags & LLMHF_INJECTED):
                     if wParam == WM_XBUTTONDOWN:
-                        if ((ms.mouseData >> 16) & 0xFFFF) == self.fly_button:
+                        if (self.trigger_type == 'button' and
+                                ((ms.mouseData >> 16) & 0xFFFF) ==
+                                self.fly_button):
                             if self.fly:
                                 return 1
                             if self.fusion_foreground():
                                 self._start_fly()
                                 return 1
                     elif wParam == WM_XBUTTONUP:
-                        if (((ms.mouseData >> 16) & 0xFFFF) == self.fly_button
-                                and self.fly):
+                        if (self.trigger_type == 'button' and
+                                ((ms.mouseData >> 16) & 0xFFFF) ==
+                                self.fly_button and self.fly):
                             self._stop_fly()
                             return 1
                     elif wParam == WM_MOUSEWHEEL and self.fly:

@@ -57,10 +57,26 @@ KEYSYM_TO_KC.update({
 DEFAULT_BINDS = {'pan_up': 13, 'pan_down': 1,          # W / S
                  'pan_left': 0, 'pan_right': 2,        # A / D
                  'zoom_in': 56, 'zoom_out': 59}        # Shift / Control
+DEFAULT_COMBO = {'code': 37, 'mods': ['ctrl', 'alt']}  # Ctrl+Option+L
 # CGEvent button numbers: 3 = back side button, 4 = forward side button
 FLY_BUTTON_LABELS = {2: 'Forward side', 1: 'Back side'}
 _BUTTON_NUM = {2: 4, 1: 3}
 SUPPORTS_AUTOSTART = False
+
+MOD_MASKS = {}
+if Quartz:
+    MOD_MASKS = {'shift': Quartz.kCGEventFlagMaskShift,
+                 'ctrl': Quartz.kCGEventFlagMaskControl,
+                 'alt': Quartz.kCGEventFlagMaskAlternate}
+
+
+def held_mods():
+    """Modifier keys held right now (session-wide state)."""
+    if not Quartz:
+        return []
+    flags = Quartz.CGEventSourceFlagsState(
+        Quartz.kCGEventSourceStateCombinedSessionState)
+    return [m for m, mask in MOD_MASKS.items() if flags & mask]
 
 # right-hand modifier keycodes fold onto the left-hand ones
 _NORMALIZE = {60: 56, 62: 59, 61: 58}
@@ -227,10 +243,32 @@ class Engine(BaseEngine):
                 Quartz.CGEventTapEnable(self._tap, True)
                 return event
 
+            # Key-combo fly trigger (works with mouse drivers that remap
+            # side buttons to synthetic keystrokes - see backend_win).
+            if (self.trigger_type == 'combo' and
+                    etype in (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp)):
+                kc = normalize_kc(Quartz.CGEventGetIntegerValueField(
+                    event, Quartz.kCGKeyboardEventKeycode))
+                if kc == self.combo_code:
+                    if etype == Quartz.kCGEventKeyDown:
+                        if self.fly:
+                            return None           # swallow auto-repeat
+                        flags = Quartz.CGEventGetFlags(event)
+                        if (all(flags & MOD_MASKS[m]
+                                for m in self.combo_mods) and
+                                self.fusion_foreground(force=True)):
+                            self._start_fly()
+                            return None
+                    elif self.fly:
+                        # stop on release regardless of modifier state
+                        self._stop_fly()
+                        return None
+
             if etype == Quartz.kCGEventOtherMouseDown:
                 btn = Quartz.CGEventGetIntegerValueField(
                     event, Quartz.kCGMouseEventButtonNumber)
-                if btn == _BUTTON_NUM[self.fly_button]:
+                if (self.trigger_type == 'button' and
+                        btn == _BUTTON_NUM[self.fly_button]):
                     if self.fly:
                         return None
                     if self.fusion_foreground(force=True):
@@ -241,7 +279,8 @@ class Engine(BaseEngine):
             if etype == Quartz.kCGEventOtherMouseUp:
                 btn = Quartz.CGEventGetIntegerValueField(
                     event, Quartz.kCGMouseEventButtonNumber)
-                if btn == _BUTTON_NUM[self.fly_button] and self.fly:
+                if (self.trigger_type == 'button' and
+                        btn == _BUTTON_NUM[self.fly_button] and self.fly):
                     self._stop_fly()
                     return None
                 return event
