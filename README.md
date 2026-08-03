@@ -117,13 +117,16 @@ slider.
 
 The **scroll wheel** during flight either adjusts speed (default) or zooms
 like regular Fusion — pick in the Scroll wheel dropdown. (Wheel zoom needs
-add-in v1.3.0+; re-run the installer if you're upgrading.)
+add-in v1.3.0+; re-run the installer if you're upgrading.) *Windows only for
+now — the macOS app always uses the wheel for speed.*
 
 The fly trigger can also be a **key combo** (e.g. Ctrl+Alt+L) instead of a
 side button — pick *Key combo* in the Fly trigger dropdown and press your
 combo. This is the right choice if your mouse software (Logitech Options+,
 Razer Synapse, ...) remaps side buttons to keyboard shortcuts: those arrive
-as synthetic keystrokes, which the combo trigger deliberately accepts. Settings persist per-platform to
+as synthetic keystrokes, which the combo trigger deliberately accepts.
+*Windows only for now — the macOS app triggers on the side buttons.*
+Settings persist per-platform to
 `%APPDATA%\SpaceMouseWASD\config.json` on Windows and
 `~/Library/Application Support/SpaceMouseWASD/config.json` on macOS.
 
