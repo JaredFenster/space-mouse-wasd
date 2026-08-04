@@ -30,8 +30,8 @@ INVERT_ORBIT_X = False    # flip horizontal orbit direction
 INVERT_ORBIT_Y = False    # flip vertical orbit direction
 INVERT_ZOOM = False       # flip W/S
 ORBIT_UP_AXIS = 'auto'    # turntable axis: 'auto' | 'x' | 'y' | 'z'
-                          # auto = world axis nearest the camera's current up,
-                          # which tracks each document's actual orientation
+                          # auto = level-horizon detection per document
+                          # (see _modelUpAxis)
 # ----------------------------------------------------------------------------
 
 EVENT_ID = 'SpaceMouseWASD_navEvent'
@@ -55,22 +55,54 @@ def _log(msg):
         pass
 
 
-def _modelUpAxis(camUp):
+def _prefUpIndex():
+    try:
+        pref = _app.preferences.generalPreferences.defaultModelingOrientation
+        if pref == adsk.core.DefaultModelingOrientations.YUpModelingOrientation:
+            return 1
+    except Exception:
+        pass
+    return 2
+
+
+_axisLatch = {'i': None, 's': 1.0}
+
+
+def _modelUpAxis(camUp, fwd):
     """World 'up' used for turntable orbit.
 
-    'auto' picks the world axis nearest the camera's current up vector. The
-    global modeling-orientation *preference* is unreliable here: it only sets
-    the default for new documents, so a Z-up document under a Y-up preference
-    (or any imported file) would yaw around the wrong axis - which tilts the
-    horizon and makes constrained orbit feel like free orbit."""
+    'auto' uses level-horizon detection with latching. An axis qualifies
+    only while the horizon is level around it (camera right vector
+    perpendicular to it), and the latched axis is kept for as long as it
+    still qualifies. It only switches when the latched axis stops being
+    level and another axis clearly is - i.e. a genuinely mis-oriented
+    document. Naively picking the axis nearest the camera's up vector
+    (the 1.3.1 approach) is a feedback loop: pitching past 45 deg leans
+    the up vector past horizontal, the axis flips sideways, and orbit
+    degenerates into free orbit."""
+    comps = (camUp.x, camUp.y, camUp.z)
     if ORBIT_UP_AXIS in ('x', 'y', 'z'):
         i = 'xyz'.index(ORBIT_UP_AXIS)
     else:
-        comps = (camUp.x, camUp.y, camUp.z)
-        i = max(range(3), key=lambda n: abs(comps[n]))
+        if _axisLatch['i'] is None:
+            _axisLatch['i'] = _prefUpIndex()
+        i = _axisLatch['i']
+        right = fwd.crossProduct(camUp)
+        if right.length > 1e-9:
+            right.normalize()
+            rc = (abs(right.x), abs(right.y), abs(right.z))
+            cand = [n for n in range(3) if rc[n] < 0.2]
+            if cand and i not in cand:
+                pref = _prefUpIndex()
+                if pref in cand:
+                    i = pref
+                else:
+                    i = max(cand, key=lambda n: abs(comps[n]))
+                _axisLatch['i'] = i
+    if abs(comps[i]) >= 0.05:              # keep working upside-down, with
+        _axisLatch['s'] = -1.0 if comps[i] < 0 else 1.0   # pole hysteresis
     v = [0.0, 0.0, 0.0]
-    comps = (camUp.x, camUp.y, camUp.z)
-    v[i] = -1.0 if comps[i] < 0 else 1.0   # keep working upside-down
+    v[i] = _axisLatch['s']
     return adsk.core.Vector3D.create(*v)
 
 
@@ -216,7 +248,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
         # latch the axis for the whole fly session: re-detecting every frame
         # lets it flip mid-orbit near a pole, which snaps the horizon
         if self.upAxis is None:
-            self.upAxis = _modelUpAxis(up)
+            self.upAxis = _modelUpAxis(up, fwd)
         upAxis = self.upAxis
 
         # ---- orbit (turntable: yaw about world up through target, pitch about

@@ -155,10 +155,10 @@ After editing, re-run `install_addin.bat` and restart the add-in
   software sends.
 - **Wrong orbit/zoom direction** — flip the `INVERT_*` flags in the add-in.
 - **Orbit tilts the horizon / feels like free orbit** — fixed in add-in
-  v1.3.2, which rebuilds the camera frame from the world up axis every frame
-  so roll stays at zero; update the add-in. If the *axis* itself is wrong
-  (orbit spins around the wrong direction), pin `ORBIT_UP_AXIS` to `'y'` or
-  `'z'` in the add-in.
+  v1.3.3: the camera frame is rebuilt from the world up axis every frame so
+  roll stays at zero, and the axis itself is detected with a level-horizon
+  test that pitched views can't confuse. Update the add-in. If your setup
+  still fights it, pin `ORBIT_UP_AXIS` to `'y'` or `'z'` in the add-in.
 - **Nothing happens after granting permission on macOS** — TCC ties the
   grant to the exact signed app; rebuilding with `build_app.sh` ad-hoc-signs
   it, so if a rebuild's identity changes you may need to remove and re-add
