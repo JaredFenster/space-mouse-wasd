@@ -183,15 +183,6 @@ SpaceMouseWASD.bat              Launch the controller app (Windows)
 install_addin.bat / .sh         Install/update the Fusion add-in (Win / mac)
 ```
 
-## Credits
-
-macOS testing and fixes: Devansh Gaur — dragged-event capture, background
-cursor hiding, and the cross-platform custom widgets.
-
-Key-combo trigger for remapped mouse buttons: prompted by
-[#1](../../issues/1) from TMTYD, including the diagnosis that injected
-keystrokes from mouse drivers were being filtered out.
-
 ## License
 
 [MIT](LICENSE)
