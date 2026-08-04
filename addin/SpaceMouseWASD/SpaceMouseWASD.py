@@ -106,14 +106,15 @@ def _modelUpAxis(camUp, fwd):
     return adsk.core.Vector3D.create(*v)
 
 
-_bboxCache = {'t': -1e9, 'pt': None}
+_bboxCache = {'stale': True, 'pt': None}
 
 
 def _modelCenter():
-    """World-space center of the visible model's bounding box, cached ~2s.
+    """World-space center of the visible model's bounding box, computed once
+    per fly session - occurrence bounding boxes are expensive enough that
+    recomputing on a timer visibly hitches the camera on larger designs.
     Used as the spacemouse-style pivot anchor. None if nothing to measure."""
-    now = time.monotonic()
-    if now - _bboxCache['t'] < 2.0:
+    if not _bboxCache['stale']:
         return _bboxCache['pt']
     pt = None
     try:
@@ -150,7 +151,7 @@ def _modelCenter():
                                               (lo[2] + hi[2]) / 2.0)
     except Exception:
         pt = None
-    _bboxCache['t'] = now
+    _bboxCache['stale'] = False
     _bboxCache['pt'] = pt
     return pt
 
@@ -208,6 +209,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                 self.orbVel = [0.0, 0.0]
                 self.wheelVel = 0.0
                 self.upAxis = None      # re-detect on the next fly session
+                _bboxCache['stale'] = True   # re-measure the pivot next session
                 return
 
             self._applyCamera(dt)
