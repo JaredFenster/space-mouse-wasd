@@ -71,15 +71,15 @@ _axisLatch = {'i': None, 's': 1.0}
 def _modelUpAxis(camUp, fwd):
     """World 'up' used for turntable orbit.
 
-    'auto' uses level-horizon detection with latching. An axis qualifies
-    only while the horizon is level around it (camera right vector
-    perpendicular to it), and the latched axis is kept for as long as it
-    still qualifies. It only switches when the latched axis stops being
-    level and another axis clearly is - i.e. a genuinely mis-oriented
-    document. Naively picking the axis nearest the camera's up vector
-    (the 1.3.1 approach) is a feedback loop: pitching past 45 deg leans
-    the up vector past horizontal, the axis flips sideways, and orbit
-    degenerates into free orbit."""
+    'auto' uses level-horizon detection with strong hysteresis. The latched
+    axis is kept while the horizon is level around it (camera right vector
+    perpendicular to it). It switches only when the latch is clearly
+    violated AND another axis is both level and strongly up-aligned - i.e.
+    a genuinely mis-oriented document. Both halves of that condition
+    matter: picking the axis nearest the camera's up (1.3.1) flipped
+    sideways in pitched views, and switching to any merely-level axis
+    (1.3.3) let views left rolled by Look At / sketch edits latch a
+    sideways axis for a whole fly session - intermittent 'free orbit'."""
     comps = (camUp.x, camUp.y, camUp.z)
     if ORBIT_UP_AXIS in ('x', 'y', 'z'):
         i = 'xyz'.index(ORBIT_UP_AXIS)
@@ -91,14 +91,19 @@ def _modelUpAxis(camUp, fwd):
         if right.length > 1e-9:
             right.normalize()
             rc = (abs(right.x), abs(right.y), abs(right.z))
-            cand = [n for n in range(3) if rc[n] < 0.2]
-            if cand and i not in cand:
-                pref = _prefUpIndex()
-                if pref in cand:
-                    i = pref
-                else:
-                    i = max(cand, key=lambda n: abs(comps[n]))
-                _axisLatch['i'] = i
+            if rc[i] >= 0.2:
+                # Latch violated: the horizon is rolled against the latched
+                # axis. A replacement must be BOTH level and strongly
+                # up-aligned - a view left rolled by Look At or a sketch
+                # edit is rolled against every axis, qualifies nothing, and
+                # keeps the latch (first orbit input just re-levels it).
+                cand = [n for n in range(3)
+                        if rc[n] < 0.2 and abs(comps[n]) > 0.7]
+                if cand:
+                    pref = _prefUpIndex()
+                    i = pref if pref in cand else max(
+                        cand, key=lambda n: abs(comps[n]))
+                    _axisLatch['i'] = i
     if abs(comps[i]) >= 0.05:              # keep working upside-down, with
         _axisLatch['s'] = -1.0 if comps[i] < 0 else 1.0   # pole hysteresis
     v = [0.0, 0.0, 0.0]
@@ -116,6 +121,7 @@ def _modelCenter():
     Used as the spacemouse-style pivot anchor. None if nothing to measure."""
     if not _bboxCache['stale']:
         return _bboxCache['pt']
+    t0 = time.monotonic()
     pt = None
     try:
         des = adsk.fusion.Design.cast(_app.activeProduct)
@@ -153,6 +159,9 @@ def _modelCenter():
         pt = None
     _bboxCache['stale'] = False
     _bboxCache['pt'] = pt
+    ms = (time.monotonic() - t0) * 1000.0
+    if ms > 50.0:
+        _log('pivot bbox measured in %.0f ms' % ms)
     return pt
 
 
@@ -175,11 +184,21 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                 return
 
             now = time.monotonic()
-            if self.lastT is None:
+            gap = None if self.lastT is None else now - self.lastT
+            self.lastT = now
+            if gap is None or gap > 0.7:
+                # Packets stream continuously (90 Hz + 1.5 s tail) while
+                # flying, so a gap means a new fly session. Re-detect the
+                # orbit axis and re-measure the pivot HERE, at fly start -
+                # invalidating in the idle branch below re-armed it every
+                # time motion paused mid-flight, putting the (expensive)
+                # bbox measurement in the middle of the next gesture.
+                self.upAxis = None
+                _bboxCache['stale'] = True
+                _modelCenter()
                 dt = 0.016
             else:
-                dt = now - self.lastT
-            self.lastT = now
+                dt = gap
             if dt <= 0.0005:
                 return
             dt = min(dt, 0.05)
@@ -208,8 +227,9 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                 self.vel = [0.0, 0.0, 0.0]
                 self.orbVel = [0.0, 0.0]
                 self.wheelVel = 0.0
-                self.upAxis = None      # re-detect on the next fly session
-                _bboxCache['stale'] = True   # re-measure the pivot next session
+                # session resets (upAxis, pivot cache) happen on packet-gap
+                # detection above, NOT here: this branch also runs when
+                # motion merely pauses mid-flight.
                 return
 
             self._applyCamera(dt)
