@@ -103,6 +103,8 @@ def _modelUpAxis(camUp, fwd):
                     pref = _prefUpIndex()
                     i = pref if pref in cand else max(
                         cand, key=lambda n: abs(comps[n]))
+                    if i != _axisLatch['i']:
+                        _log('orbit axis switched to %s' % 'xyz'[i])
                     _axisLatch['i'] = i
     if abs(comps[i]) >= 0.05:              # keep working upside-down, with
         _axisLatch['s'] = -1.0 if comps[i] < 0 else 1.0   # pole hysteresis
