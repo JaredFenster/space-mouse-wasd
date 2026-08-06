@@ -30,8 +30,9 @@ INVERT_ORBIT_X = False    # flip horizontal orbit direction
 INVERT_ORBIT_Y = False    # flip vertical orbit direction
 INVERT_ZOOM = False       # flip W/S
 ORBIT_UP_AXIS = 'auto'    # turntable axis: 'auto' | 'x' | 'y' | 'z'
-                          # auto = level-horizon detection per document
-                          # (see _modelUpAxis)
+                          # auto = level-horizon detection (see _modelUpAxis).
+                          # The controller app's "Orbit axis" dropdown
+                          # overrides this at runtime via the 'ua' packet field.
 # ----------------------------------------------------------------------------
 
 EVENT_ID = 'SpaceMouseWASD_navEvent'
@@ -66,6 +67,7 @@ def _prefUpIndex():
 
 
 _axisLatch = {'i': None, 's': 1.0}
+_uaOverride = {'v': 'auto'}    # controller-app "Orbit axis" setting
 
 
 def _modelUpAxis(camUp, fwd):
@@ -81,8 +83,10 @@ def _modelUpAxis(camUp, fwd):
     (1.3.3) let views left rolled by Look At / sketch edits latch a
     sideways axis for a whole fly session - intermittent 'free orbit'."""
     comps = (camUp.x, camUp.y, camUp.z)
-    if ORBIT_UP_AXIS in ('x', 'y', 'z'):
-        i = 'xyz'.index(ORBIT_UP_AXIS)
+    mode = (_uaOverride['v'] if _uaOverride['v'] != 'auto'
+            else ORBIT_UP_AXIS)
+    if mode in ('x', 'y', 'z'):
+        i = 'xyz'.index(mode)
     else:
         if _axisLatch['i'] is None:
             _axisLatch['i'] = _prefUpIndex()
@@ -210,6 +214,10 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                       pkt.get('ty', 0.0) * mult,
                       pkt.get('tz', 0.0) * mult]
             tgtOrb = [pkt.get('rx', 0.0), pkt.get('ry', 0.0)]
+
+            ua = pkt.get('ua')
+            if ua in ('auto', 'x', 'y', 'z'):
+                _uaOverride['v'] = ua
 
             aM = 1.0 - math.exp(-dt / TAU_MOVE)
             aO = 1.0 - math.exp(-dt / TAU_ORBIT)

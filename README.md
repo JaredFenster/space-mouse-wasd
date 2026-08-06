@@ -120,6 +120,13 @@ like regular Fusion — pick in the Scroll wheel dropdown. (Wheel zoom needs
 add-in v1.3.0+; re-run the installer if you're upgrading.) *Windows only for
 now — the macOS app always uses the wheel for speed.*
 
+The **orbit axis** defaults to auto-detection, which keeps the horizon
+level around whichever axis your document treats as up. If orbit ever
+constrains to the wrong axis (the model turns as if lying on its side),
+pin it: pick your document's up axis in the Orbit axis dropdown.
+(Needs add-in v1.4.0+; the macOS app doesn't send this setting yet — set
+`ORBIT_UP_AXIS` in the add-in instead.)
+
 The fly trigger can also be a **key combo** (e.g. Ctrl+Alt+L) instead of a
 side button — pick *Key combo* in the Fly trigger dropdown and press your
 combo. This is the right choice if your mouse software (Logitech Options+,
@@ -158,7 +165,7 @@ After editing, re-run `install_addin.bat` and restart the add-in
   v1.3.3: the camera frame is rebuilt from the world up axis every frame so
   roll stays at zero, and the axis itself is detected with a level-horizon
   test that pitched views can't confuse. Update the add-in. If your setup
-  still fights it, pin `ORBIT_UP_AXIS` to `'y'` or `'z'` in the add-in.
+  still fights it, pin the axis in the app's Orbit axis dropdown.
 - **Nothing happens after granting permission on macOS** — TCC ties the
   grant to the exact signed app; rebuilding with `build_app.sh` ad-hoc-signs
   it, so if a rebuild's identity changes you may need to remove and re-add
