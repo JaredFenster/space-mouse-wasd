@@ -296,9 +296,12 @@ class NavEventHandler(adsk.core.CustomEventHandler):
             fwd = eye.vectorTo(tgt)
             fwd.scaleBy(1.0 / max(fwd.length, 1e-12))
 
-        # pitch about the *level* right vector, so pitching never adds roll
+        # pitch about the *level* right vector, so pitching never adds roll.
+        # Within ~1 deg of a pole the perpendicular component is numerical
+        # noise whose direction jumps frame to frame (visible flicker), so
+        # derive right from the camera's own up there instead.
         right = fwd.crossProduct(upAxis)
-        if right.length < 1e-6:
+        if right.length < 0.02:
             right = fwd.crossProduct(up)
         if right.length < 1e-9:
             return
@@ -312,8 +315,14 @@ class NavEventHandler(adsk.core.CustomEventHandler):
             newFwd = newEye.vectorTo(tgt)
             if newFwd.length > 1e-9:
                 newFwd.normalize()
+                oldAng = fwd.angleTo(upAxis)
                 ang = newFwd.angleTo(upAxis)
-                if 0.03 < ang < math.pi - 0.03:   # don't flip over the poles
+                lo, hi = 0.03, math.pi - 0.03
+                # accept inside the clamp band - and always accept a step
+                # AWAY from a pole, or a session started at ViewCube
+                # Top/Bottom (inside the band) has its pitch stuck forever
+                if (lo < ang < hi or (oldAng <= lo and ang > oldAng)
+                        or (oldAng >= hi and ang < oldAng)):
                     eye = newEye
                     up.transformBy(m)
                     fwd = newFwd
@@ -324,9 +333,9 @@ class NavEventHandler(adsk.core.CustomEventHandler):
         # rolled right-vector adds more of it every frame - which is what made
         # this feel like free orbit. ----
         right = fwd.crossProduct(upAxis)
-        if right.length < 1e-6:
-            right = fwd.crossProduct(up)    # looking down the axis: keep roll
-        right.normalize()
+        if right.length < 0.02:
+            right = fwd.crossProduct(up)    # at the pole: keep current roll,
+        right.normalize()                   # not cross-product noise
         trueUp = right.crossProduct(fwd)
         trueUp.normalize()
 
