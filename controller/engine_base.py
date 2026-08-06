@@ -27,6 +27,7 @@ class BaseEngine:
         self.speed_dirty = False              # set when wheel changes speed
         self.scroll_mode = cfg.get('scroll_mode', 'speed')   # or 'zoom'
         self.free_orbit = bool(cfg.get('free_orbit', False))
+        self.roll_speed = cfg.get('roll_speed', 1.0)
         self._wheel = 0.0                     # zoom notches since last packet
         self.fly = False
         self.last_ack = 0.0
@@ -174,7 +175,8 @@ class BaseEngine:
                 rz = 0.0
                 if fo:
                     rz = ((1.0 if d.get(b.get('roll_right')) else 0.0) -
-                          (1.0 if d.get(b.get('roll_left')) else 0.0))
+                          (1.0 if d.get(b.get('roll_left')) else 0.0)
+                          ) * self.roll_speed
                 sp = self.speed
 
             pkt = {'tx': tx, 'ty': ty, 'tz': tz,

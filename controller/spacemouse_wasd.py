@@ -25,6 +25,8 @@ else:
 
 from engine_base import SPEED_MIN, SPEED_MAX
 
+ROLL_MIN, ROLL_MAX = 0.1, 3.0     # roll-speed multiplier range
+
 APP_NAME = 'SpaceMouse WASD'
 VERSION = '1.6.0'
 LOCK_PORT = 42739         # single-instance guard (bound while app runs)
@@ -71,7 +73,8 @@ ROLL_ACTIONS = [
 def load_config():
     cfg = {'binds': dict(backend.DEFAULT_BINDS), 'fly_button': 2,
            'trigger_type': 'button', 'combo': dict(backend.DEFAULT_COMBO),
-           'scroll_mode': 'speed', 'free_orbit': False, 'speed': 1.0}
+           'scroll_mode': 'speed', 'free_orbit': False,
+           'roll_speed': 1.0, 'speed': 1.0}
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             saved = json.load(f)
@@ -90,6 +93,9 @@ def load_config():
             cfg['scroll_mode'] = saved['scroll_mode']
         if isinstance(saved.get('free_orbit'), bool):
             cfg['free_orbit'] = saved['free_orbit']
+        rs = saved.get('roll_speed')
+        if isinstance(rs, (int, float)):
+            cfg['roll_speed'] = min(max(float(rs), ROLL_MIN), ROLL_MAX)
         combo = saved.get(COMBO_KEY)
         if (isinstance(combo, dict) and isinstance(combo.get('code'), int)
                 and isinstance(combo.get('mods'), list)):
@@ -112,7 +118,8 @@ def save_config(cfg):
            'trigger_type': cfg['trigger_type'],
            'fly_button': cfg['fly_button'],
            'scroll_mode': cfg['scroll_mode'],
-           'free_orbit': cfg['free_orbit'], 'speed': cfg['speed']}
+           'free_orbit': cfg['free_orbit'],
+           'roll_speed': cfg['roll_speed'], 'speed': cfg['speed']}
     out.update(cfg.get('_other_os', {}))    # keep the other OS's settings
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -381,6 +388,21 @@ class App:
             btn.grid(row=r, column=1, sticky='e', padx=(0, 14), pady=3)
             self.bind_buttons[action] = btn
             self.roll_widgets += [lbl, btn]
+
+        r += 1
+        rrow = tk.Frame(bcard, bg=CARD)
+        rrow.grid(row=r, column=0, columnspan=2, sticky='ew',
+                  padx=14, pady=(3, 3))
+        tk.Label(rrow, text='Roll speed', font=FONT, fg=TEXT,
+                 bg=CARD).pack(side='left')
+        self.roll_lbl = tk.Label(rrow, text='x%.2f' % cfg['roll_speed'],
+                                 font=FONT_KEY, fg=ACCENT, bg=CARD, width=6)
+        self.roll_lbl.pack(side='right')
+        self.roll_slider = Slider(rrow, ROLL_MIN, ROLL_MAX,
+                                  cfg['roll_speed'], self.on_roll_speed)
+        self.roll_slider.pack(side='left', fill='x', expand=True, padx=12)
+        self.roll_widgets.append(rrow)
+
         if not cfg['free_orbit']:
             for wdg in self.roll_widgets:
                 wdg.grid_remove()
@@ -562,6 +584,16 @@ class App:
                 wdg.grid_remove()
         save_config(self.cfg)
 
+    def on_roll_speed(self, value):
+        v = float(value)
+        self.engine.roll_speed = v
+        self.cfg['roll_speed'] = v
+        self.roll_lbl.config(text='x%.2f' % v)
+        if self._save_job:
+            self.root.after_cancel(self._save_job)
+        self._save_job = self.root.after(
+            800, lambda: save_config(self.cfg))
+
     def begin_combo_capture(self):
         if self.capturing:
             self.end_capture()
@@ -601,9 +633,13 @@ class App:
         self.cfg['combo'] = dict(backend.DEFAULT_COMBO)
         self.cfg['scroll_mode'] = 'speed'
         self.cfg['free_orbit'] = False
+        self.cfg['roll_speed'] = 1.0
         self.cfg['speed'] = 1.0
         self.engine.set_free_orbit(False)
+        self.engine.roll_speed = 1.0
         self.free_btn.config(text='Off', fg=TEXT)
+        self.roll_slider.set(1.0)
+        self.roll_lbl.config(text='x%.2f' % 1.0)
         for wdg in self.roll_widgets:
             wdg.grid_remove()
         self.engine.set_binds(self.cfg['binds'])
