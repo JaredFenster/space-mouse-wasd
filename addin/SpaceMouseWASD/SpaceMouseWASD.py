@@ -318,11 +318,24 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                 oldAng = fwd.angleTo(upAxis)
                 ang = newFwd.angleTo(upAxis)
                 lo, hi = 0.03, math.pi - 0.03
-                # accept inside the clamp band - and always accept a step
-                # AWAY from a pole, or a session started at ViewCube
-                # Top/Bottom (inside the band) has its pitch stuck forever
-                if (lo < ang < hi or (oldAng <= lo and ang > oldAng)
-                        or (oldAng >= hi and ang < oldAng)):
+                # Checking only the DESTINATION angle is not enough: one
+                # fast frame (a 5-15 deg step) can rotate straight over the
+                # pole and land back inside the legal band. That flips the
+                # view 180 deg, and with smoothed velocity it vaults back
+                # the next frame - the violent flicker at top/bottom views.
+                # A vault reverses fwd's horizontal component, which no
+                # legitimate step does, so reject on that reversal.
+                dOld = fwd.dotProduct(upAxis)
+                dNew = newFwd.dotProduct(upAxis)
+                vaulted = (math.sin(oldAng) > 1e-4 and
+                           math.sin(ang) > 1e-4 and
+                           fwd.dotProduct(newFwd) - dOld * dNew < 0.0)
+                inBand = lo < ang < hi
+                # always accept a step AWAY from a pole, or a session
+                # started at ViewCube Top/Bottom has its pitch stuck forever
+                escaping = ((oldAng <= lo and ang > oldAng) or
+                            (oldAng >= hi and ang < oldAng))
+                if (inBand or escaping) and not vaulted:
                     eye = newEye
                     up.transformBy(m)
                     fwd = newFwd
