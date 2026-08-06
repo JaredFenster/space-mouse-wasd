@@ -26,7 +26,6 @@ class BaseEngine:
         self.speed = cfg['speed']
         self.speed_dirty = False              # set when wheel changes speed
         self.scroll_mode = cfg.get('scroll_mode', 'speed')   # or 'zoom'
-        self.orbit_axis = cfg.get('orbit_axis', 'auto')  # 'auto'|'x'|'y'|'z'
         self._wheel = 0.0                     # zoom notches since last packet
         self.fly = False
         self.last_ack = 0.0
@@ -163,7 +162,6 @@ class BaseEngine:
             pkt = {'tx': tx, 'ty': ty, 'tz': tz,
                    'rx': dx * SEND_HZ, 'ry': dy * SEND_HZ,   # px/sec rates
                    'wz': wz,                                 # wheel zoom notches
-                   'ua': self.orbit_axis,                    # orbit up axis
                    'sp': sp, 'boost': False}
             try:
                 sock.sendto(json.dumps(pkt).encode('utf-8'), addr)

@@ -26,7 +26,7 @@ else:
 from engine_base import SPEED_MIN, SPEED_MAX
 
 APP_NAME = 'SpaceMouse WASD'
-VERSION = '1.4.0'
+VERSION = '1.5.0'
 LOCK_PORT = 42739         # single-instance guard (bound while app runs)
 if sys.platform == 'darwin':
     CONFIG_DIR = os.path.expanduser(
@@ -41,7 +41,6 @@ BINDS_KEY = 'binds_mac' if sys.platform == 'darwin' else 'binds_win'
 COMBO_KEY = 'combo_mac' if sys.platform == 'darwin' else 'combo_win'
 COMBO_LABEL = 'Key combo'
 SCROLL_LABELS = {'speed': 'Adjust speed', 'zoom': 'Zoom'}
-AXIS_LABELS = {'auto': 'Auto detect', 'x': 'X up', 'y': 'Y up', 'z': 'Z up'}
 MOD_ORDER = ('ctrl', 'alt', 'shift')
 MOD_TITLES = {'ctrl': 'Ctrl', 'alt': 'Alt', 'shift': 'Shift'}
 
@@ -65,7 +64,7 @@ ACTIONS = [
 def load_config():
     cfg = {'binds': dict(backend.DEFAULT_BINDS), 'fly_button': 2,
            'trigger_type': 'button', 'combo': dict(backend.DEFAULT_COMBO),
-           'scroll_mode': 'speed', 'orbit_axis': 'auto', 'speed': 1.0}
+           'scroll_mode': 'speed', 'speed': 1.0}
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             saved = json.load(f)
@@ -82,8 +81,6 @@ def load_config():
             cfg['trigger_type'] = saved['trigger_type']
         if saved.get('scroll_mode') in ('speed', 'zoom'):
             cfg['scroll_mode'] = saved['scroll_mode']
-        if saved.get('orbit_axis') in AXIS_LABELS:
-            cfg['orbit_axis'] = saved['orbit_axis']
         combo = saved.get(COMBO_KEY)
         if (isinstance(combo, dict) and isinstance(combo.get('code'), int)
                 and isinstance(combo.get('mods'), list)):
@@ -105,8 +102,7 @@ def save_config(cfg):
     out = {BINDS_KEY: cfg['binds'], COMBO_KEY: cfg['combo'],
            'trigger_type': cfg['trigger_type'],
            'fly_button': cfg['fly_button'],
-           'scroll_mode': cfg['scroll_mode'],
-           'orbit_axis': cfg['orbit_axis'], 'speed': cfg['speed']}
+           'scroll_mode': cfg['scroll_mode'], 'speed': cfg['speed']}
     out.update(cfg.get('_other_os', {}))    # keep the other OS's settings
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -385,15 +381,6 @@ class App:
         self.scroll_dd.grid(row=r, column=1, sticky='e', padx=(0, 14), pady=3)
 
         r += 1
-        tk.Label(bcard, text='Orbit axis', font=FONT, fg=TEXT, bg=CARD,
-                 anchor='w').grid(row=r, column=0, sticky='w',
-                                  padx=(14, 20), pady=3)
-        self.axis_dd = Dropdown(
-            bcard, list(AXIS_LABELS.values()),
-            AXIS_LABELS[cfg['orbit_axis']], self.on_orbit_axis)
-        self.axis_dd.grid(row=r, column=1, sticky='e', padx=(0, 14), pady=3)
-
-        r += 1
         srow = tk.Frame(bcard, bg=CARD)
         srow.grid(row=r, column=0, columnspan=2, sticky='ew',
                   padx=14, pady=(6, 12))
@@ -524,13 +511,6 @@ class App:
         save_config(self.cfg)
         self._update_hint()
 
-    def on_orbit_axis(self, choice):
-        for axis, label in AXIS_LABELS.items():
-            if label == choice:
-                self.cfg['orbit_axis'] = axis
-        self.engine.orbit_axis = self.cfg['orbit_axis']
-        save_config(self.cfg)
-
     def begin_combo_capture(self):
         if self.capturing:
             self.end_capture()
@@ -569,7 +549,6 @@ class App:
         self.cfg['trigger_type'] = 'button'
         self.cfg['combo'] = dict(backend.DEFAULT_COMBO)
         self.cfg['scroll_mode'] = 'speed'
-        self.cfg['orbit_axis'] = 'auto'
         self.cfg['speed'] = 1.0
         self.engine.set_binds(self.cfg['binds'])
         self.engine.fly_button = 2
@@ -578,8 +557,6 @@ class App:
         self.engine.combo_mods = list(self.cfg['combo']['mods'])
         self.engine.scroll_mode = 'speed'
         self.scroll_dd.set(SCROLL_LABELS['speed'])
-        self.engine.orbit_axis = 'auto'
-        self.axis_dd.set(AXIS_LABELS['auto'])
         self.engine.speed = 1.0
         self.speed_slider.set(1.0)
         self.speed_lbl.config(text='x%.2f' % 1.0)

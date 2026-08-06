@@ -30,9 +30,9 @@ INVERT_ORBIT_X = False    # flip horizontal orbit direction
 INVERT_ORBIT_Y = False    # flip vertical orbit direction
 INVERT_ZOOM = False       # flip W/S
 ORBIT_UP_AXIS = 'auto'    # turntable axis: 'auto' | 'x' | 'y' | 'z'
-                          # auto = level-horizon detection (see _modelUpAxis).
-                          # The controller app's "Orbit axis" dropdown
-                          # overrides this at runtime via the 'ua' packet field.
+                          # auto = the view's own up at fly start, like
+                          # Fusion's native constrained orbit (see
+                          # _sessionUpAxis). Pin only for special setups.
 # ----------------------------------------------------------------------------
 
 EVENT_ID = 'SpaceMouseWASD_navEvent'
@@ -56,65 +56,29 @@ def _log(msg):
         pass
 
 
-def _prefUpIndex():
-    try:
-        pref = _app.preferences.generalPreferences.defaultModelingOrientation
-        if pref == adsk.core.DefaultModelingOrientations.YUpModelingOrientation:
-            return 1
-    except Exception:
-        pass
-    return 2
+def _sessionUpAxis(camUp, fwd):
+    """Turntable axis for a fly session: the view's own up vector,
+    orthonormalized against the view direction.
 
-
-_axisLatch = {'i': None, 's': 1.0}
-_uaOverride = {'v': 'auto'}    # controller-app "Orbit axis" setting
-
-
-def _modelUpAxis(camUp, fwd):
-    """World 'up' used for turntable orbit.
-
-    'auto' uses level-horizon detection with strong hysteresis. The latched
-    axis is kept while the horizon is level around it (camera right vector
-    perpendicular to it). It switches only when the latch is clearly
-    violated AND another axis is both level and strongly up-aligned - i.e.
-    a genuinely mis-oriented document. Both halves of that condition
-    matter: picking the axis nearest the camera's up (1.3.1) flipped
-    sideways in pitched views, and switching to any merely-level axis
-    (1.3.3) let views left rolled by Look At / sketch edits latch a
-    sideways axis for a whole fly session - intermittent 'free orbit'."""
-    comps = (camUp.x, camUp.y, camUp.z)
-    mode = (_uaOverride['v'] if _uaOverride['v'] != 'auto'
-            else ORBIT_UP_AXIS)
-    if mode in ('x', 'y', 'z'):
-        i = 'xyz'.index(mode)
-    else:
-        if _axisLatch['i'] is None:
-            _axisLatch['i'] = _prefUpIndex()
-        i = _axisLatch['i']
-        right = fwd.crossProduct(camUp)
-        if right.length > 1e-9:
-            right.normalize()
-            rc = (abs(right.x), abs(right.y), abs(right.z))
-            if rc[i] >= 0.2:
-                # Latch violated: the horizon is rolled against the latched
-                # axis. A replacement must be BOTH level and strongly
-                # up-aligned - a view left rolled by Look At or a sketch
-                # edit is rolled against every axis, qualifies nothing, and
-                # keeps the latch (first orbit input just re-levels it).
-                cand = [n for n in range(3)
-                        if rc[n] < 0.2 and abs(comps[n]) > 0.7]
-                if cand:
-                    pref = _prefUpIndex()
-                    i = pref if pref in cand else max(
-                        cand, key=lambda n: abs(comps[n]))
-                    if i != _axisLatch['i']:
-                        _log('orbit axis switched to %s' % 'xyz'[i])
-                    _axisLatch['i'] = i
-    if abs(comps[i]) >= 0.05:              # keep working upside-down, with
-        _axisLatch['s'] = -1.0 if comps[i] < 0 else 1.0   # pole hysteresis
-    v = [0.0, 0.0, 0.0]
-    v[i] = _axisLatch['s']
-    return adsk.core.Vector3D.create(*v)
+    This is what Fusion's native constrained orbit preserves - whatever
+    the current view treats as up. No world-axis detection: every scheme
+    that guessed a world axis from the camera (1.3.1 nearest-axis, 1.3.3
+    level-horizon, 1.4.0 user pin) picked wrong on some document, because
+    Fusion documents don't share one internal up. A tilted view stays
+    tilted, exactly like native orbit, and the zero-roll frame rebuild in
+    _applyCamera keeps THIS axis's horizon from drifting mid-session."""
+    if ORBIT_UP_AXIS in ('x', 'y', 'z'):
+        i = 'xyz'.index(ORBIT_UP_AXIS)
+        s = -1.0 if (camUp.x, camUp.y, camUp.z)[i] < 0 else 1.0
+        v = [0.0, 0.0, 0.0]
+        v[i] = s
+        return adsk.core.Vector3D.create(*v)
+    right = fwd.crossProduct(camUp)
+    up = right.crossProduct(fwd)
+    if up.length < 1e-9:
+        return camUp.copy()
+    up.normalize()
+    return up
 
 
 _bboxCache = {'stale': True, 'pt': None}
@@ -215,10 +179,6 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                       pkt.get('tz', 0.0) * mult]
             tgtOrb = [pkt.get('rx', 0.0), pkt.get('ry', 0.0)]
 
-            ua = pkt.get('ua')
-            if ua in ('auto', 'x', 'y', 'z'):
-                _uaOverride['v'] = ua
-
             aM = 1.0 - math.exp(-dt / TAU_MOVE)
             aO = 1.0 - math.exp(-dt / TAU_ORBIT)
             for i in range(3):
@@ -277,10 +237,10 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                                                eye.z + fwd.z * s)
                 dist = s
 
-        # latch the axis for the whole fly session: re-detecting every frame
-        # lets it flip mid-orbit near a pole, which snaps the horizon
+        # latch the axis for the whole fly session: re-deriving it every
+        # frame from the evolving camera is how roll compounds
         if self.upAxis is None:
-            self.upAxis = _modelUpAxis(up, fwd)
+            self.upAxis = _sessionUpAxis(up, fwd)
         upAxis = self.upAxis
 
         # ---- orbit (turntable: yaw about world up through target, pitch about
