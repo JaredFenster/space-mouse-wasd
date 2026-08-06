@@ -26,11 +26,12 @@ class BaseEngine:
         self.speed = cfg['speed']
         self.speed_dirty = False              # set when wheel changes speed
         self.scroll_mode = cfg.get('scroll_mode', 'speed')   # or 'zoom'
+        self.free_orbit = bool(cfg.get('free_orbit', False))
         self._wheel = 0.0                     # zoom notches since last packet
         self.fly = False
         self.last_ack = 0.0
         self.error = None
-        self._bound = set(self.binds.values())
+        self._rebuild_bound()
         self._down = {}
         self._accum = [0.0, 0.0]
         self._lock = threading.Lock()
@@ -74,8 +75,20 @@ class BaseEngine:
     def set_binds(self, binds):
         with self._lock:
             self.binds = dict(binds)
-            self._bound = set(binds.values())
+            self._rebuild_bound()
             self._down.clear()
+
+    def set_free_orbit(self, on):
+        with self._lock:
+            self.free_orbit = bool(on)
+            self._rebuild_bound()
+            self._down.clear()
+
+    def _rebuild_bound(self):
+        # Roll keys are intercepted (and blocked from Fusion) only while
+        # free orbit is enabled; otherwise Q/E behave normally in Fusion.
+        self._bound = {v for k, v in self.binds.items()
+                       if self.free_orbit or not k.startswith('roll_')}
 
     def adjust_speed(self, factor):
         with self._lock:
@@ -157,11 +170,18 @@ class BaseEngine:
                       (1.0 if d.get(b['pan_down']) else 0.0))
                 tz = ((1.0 if d.get(b['zoom_in']) else 0.0) -
                       (1.0 if d.get(b['zoom_out']) else 0.0))
+                fo = self.free_orbit
+                rz = 0.0
+                if fo:
+                    rz = ((1.0 if d.get(b.get('roll_right')) else 0.0) -
+                          (1.0 if d.get(b.get('roll_left')) else 0.0))
                 sp = self.speed
 
             pkt = {'tx': tx, 'ty': ty, 'tz': tz,
                    'rx': dx * SEND_HZ, 'ry': dy * SEND_HZ,   # px/sec rates
+                   'rz': rz,                                 # roll keys, -1..1
                    'wz': wz,                                 # wheel zoom notches
+                   'fo': 1 if fo else 0,                     # free orbit mode
                    'sp': sp, 'boost': False}
             try:
                 sock.sendto(json.dumps(pkt).encode('utf-8'), addr)

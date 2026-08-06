@@ -56,7 +56,8 @@ KEYSYM_TO_KC.update({
 
 DEFAULT_BINDS = {'pan_up': 13, 'pan_down': 1,          # W / S
                  'pan_left': 0, 'pan_right': 2,        # A / D
-                 'zoom_in': 56, 'zoom_out': 59}        # Shift / Control
+                 'zoom_in': 56, 'zoom_out': 59,        # Shift / Control
+                 'roll_left': 12, 'roll_right': 14}    # Q / E (free orbit)
 DEFAULT_COMBO = {'code': 37, 'mods': ['ctrl', 'alt']}  # Ctrl+Option+L
 # CGEvent button numbers: 3 = back side button, 4 = forward side button
 FLY_BUTTON_LABELS = {2: 'Forward side', 1: 'Back side'}

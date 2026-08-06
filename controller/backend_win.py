@@ -43,7 +43,8 @@ WINDOW_MATCH = ('Autodesk Fusion', 'Fusion 360')
 
 DEFAULT_BINDS = {'pan_up': 0x57, 'pan_down': 0x53,        # W / S
                  'pan_left': 0x41, 'pan_right': 0x44,     # A / D
-                 'zoom_in': 0x10, 'zoom_out': 0x11}       # Shift / Ctrl
+                 'zoom_in': 0x10, 'zoom_out': 0x11,       # Shift / Ctrl
+                 'roll_left': 0x51, 'roll_right': 0x45}   # Q / E (free orbit)
 DEFAULT_COMBO = {'code': 0x4C, 'mods': ['ctrl', 'alt']}   # Ctrl+Alt+L
 FLY_BUTTON_LABELS = {2: 'Forward side', 1: 'Back side'}
 SUPPORTS_AUTOSTART = True

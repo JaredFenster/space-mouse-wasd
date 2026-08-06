@@ -29,6 +29,8 @@ MIN_DIST = 0.05           # closest allowed eye-to-target distance, cm
 INVERT_ORBIT_X = False    # flip horizontal orbit direction
 INVERT_ORBIT_Y = False    # flip vertical orbit direction
 INVERT_ZOOM = False       # flip W/S
+ROLL_SPEED = 1.2          # free-orbit roll rate, radians/sec at full key press
+INVERT_ROLL = False       # flip the Q/E roll direction
 ORBIT_UP_AXIS = 'auto'    # turntable axis: 'auto' | 'x' | 'y' | 'z'
                           # auto = the document's own up axis (what the
                           # ViewCube and Fusion's native constrained orbit
@@ -178,9 +180,11 @@ class NavEventHandler(adsk.core.CustomEventHandler):
         super().__init__()
         self.vel = [0.0, 0.0, 0.0]      # smoothed tx, ty, tz (unitless -1..1-ish)
         self.orbVel = [0.0, 0.0]        # smoothed orbit rates, px/sec
+        self.rollVel = 0.0              # smoothed roll rate (free orbit, -1..1)
         self.wheelVel = 0.0             # decaying wheel-zoom impulse
         self.lastT = None
         self.upAxis = None              # latched per fly session (see _applyCamera)
+        self.freeOrbit = False          # controller's free-orbit toggle
 
     def notify(self, args):
         global _pending
@@ -216,6 +220,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                       pkt.get('ty', 0.0) * mult,
                       pkt.get('tz', 0.0) * mult]
             tgtOrb = [pkt.get('rx', 0.0), pkt.get('ry', 0.0)]
+            self.freeOrbit = bool(pkt.get('fo', 0))
 
             aM = 1.0 - math.exp(-dt / TAU_MOVE)
             aO = 1.0 - math.exp(-dt / TAU_ORBIT)
@@ -223,6 +228,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                 self.vel[i] += (tgtVel[i] - self.vel[i]) * aM
             for i in range(2):
                 self.orbVel[i] += (tgtOrb[i] - self.orbVel[i]) * aO
+            self.rollVel += (pkt.get('rz', 0.0) - self.rollVel) * aM
 
             # wheel zoom: each notch is a velocity kick that glides out
             wz = pkt.get('wz', 0.0) * (-1.0 if INVERT_WHEEL_ZOOM else 1.0)
@@ -231,9 +237,11 @@ class NavEventHandler(adsk.core.CustomEventHandler):
 
             if (max(abs(v) for v in self.vel) < 1e-4 and
                     max(abs(v) for v in self.orbVel) < 0.05 and
+                    abs(self.rollVel) < 1e-4 and
                     abs(self.wheelVel) < 1e-3):
                 self.vel = [0.0, 0.0, 0.0]
                 self.orbVel = [0.0, 0.0]
+                self.rollVel = 0.0
                 self.wheelVel = 0.0
                 # session resets (upAxis, pivot cache) happen on packet-gap
                 # detection above, NOT here: this branch also runs when
@@ -275,82 +283,122 @@ class NavEventHandler(adsk.core.CustomEventHandler):
                                                eye.z + fwd.z * s)
                 dist = s
 
-        # latch the axis for the whole fly session: re-deriving it every
-        # frame from the evolving camera is how roll compounds
-        if self.upAxis is None:
-            self.upAxis = _documentUpAxis(vp, up)
-        upAxis = self.upAxis
-
-        # ---- orbit (turntable: yaw about world up through target, pitch about
-        # camera-right through target, clamped near the poles) ----
         sx = -1.0 if INVERT_ORBIT_X else 1.0
         sy = -1.0 if INVERT_ORBIT_Y else 1.0
         yawA = -self.orbVel[0] * dt * ORBIT_SENS * sx
         pitchA = -self.orbVel[1] * dt * ORBIT_SENS * sy
 
-        if abs(yawA) > 1e-9:
-            m = adsk.core.Matrix3D.create()
-            m.setToRotation(yawA, upAxis, tgt)
-            eye.transformBy(m)
-            up.transformBy(m)
-            fwd = eye.vectorTo(tgt)
-            fwd.scaleBy(1.0 / max(fwd.length, 1e-12))
-
-        # pitch about the *level* right vector, so pitching never adds roll.
-        # Within ~1 deg of a pole the perpendicular component is numerical
-        # noise whose direction jumps frame to frame (visible flicker), so
-        # derive right from the camera's own up there instead.
-        right = fwd.crossProduct(upAxis)
-        if right.length < 0.02:
-            right = fwd.crossProduct(up)
-        if right.length < 1e-9:
-            return
-        right.normalize()
-
-        if abs(pitchA) > 1e-9:
-            m = adsk.core.Matrix3D.create()
-            m.setToRotation(pitchA, right, tgt)
-            newEye = eye.copy()
-            newEye.transformBy(m)
-            newFwd = newEye.vectorTo(tgt)
-            if newFwd.length > 1e-9:
-                newFwd.normalize()
-                oldAng = fwd.angleTo(upAxis)
-                ang = newFwd.angleTo(upAxis)
-                lo, hi = 0.03, math.pi - 0.03
-                # Checking only the DESTINATION angle is not enough: one
-                # fast frame (a 5-15 deg step) can rotate straight over the
-                # pole and land back inside the legal band. That flips the
-                # view 180 deg, and with smoothed velocity it vaults back
-                # the next frame - the violent flicker at top/bottom views.
-                # A vault reverses fwd's horizontal component, which no
-                # legitimate step does, so reject on that reversal.
-                dOld = fwd.dotProduct(upAxis)
-                dNew = newFwd.dotProduct(upAxis)
-                vaulted = (math.sin(oldAng) > 1e-4 and
-                           math.sin(ang) > 1e-4 and
-                           fwd.dotProduct(newFwd) - dOld * dNew < 0.0)
-                inBand = lo < ang < hi
-                # always accept a step AWAY from a pole, or a session
-                # started at ViewCube Top/Bottom has its pitch stuck forever
-                escaping = ((oldAng <= lo and ang > oldAng) or
-                            (oldAng >= hi and ang < oldAng))
-                if (inBand or escaping) and not vaulted:
-                    eye = newEye
+        if self.freeOrbit:
+            # ---- free orbit: rotate about the camera's OWN axes through the
+            # target - no world-up constraint, no pole clamp, roll allowed.
+            # The mouse covers yaw + pitch; Q/E supply roll about the view
+            # axis, the one rotation the mouse can't express. ----
+            rollA = (self.rollVel * dt * ROLL_SPEED *
+                     (-1.0 if INVERT_ROLL else 1.0))
+            if abs(yawA) > 1e-9:
+                m = adsk.core.Matrix3D.create()
+                m.setToRotation(yawA, up, tgt)
+                eye.transformBy(m)
+                fwd = eye.vectorTo(tgt)
+                fwd.scaleBy(1.0 / max(fwd.length, 1e-12))
+            if abs(pitchA) > 1e-9:
+                right = fwd.crossProduct(up)
+                if right.length > 1e-9:
+                    right.normalize()
+                    m = adsk.core.Matrix3D.create()
+                    m.setToRotation(pitchA, right, tgt)
+                    eye.transformBy(m)
                     up.transformBy(m)
-                    fwd = newFwd
+                    fwd = eye.vectorTo(tgt)
+                    fwd.scaleBy(1.0 / max(fwd.length, 1e-12))
+            if abs(rollA) > 1e-9:
+                # eye sits on the roll axis (fwd through tgt), so only the
+                # up vector turns
+                m = adsk.core.Matrix3D.create()
+                m.setToRotation(rollA, fwd, tgt)
+                up.transformBy(m)
+            # re-orthonormalize against numeric drift, keeping the rolled up
+            right = fwd.crossProduct(up)
+            if right.length < 1e-9:
+                return
+            right.normalize()
+            trueUp = right.crossProduct(fwd)
+            trueUp.normalize()
+        else:
+            # latch the axis for the whole fly session: re-deriving it every
+            # frame from the evolving camera is how roll compounds
+            if self.upAxis is None:
+                self.upAxis = _documentUpAxis(vp, up)
+            upAxis = self.upAxis
 
-        # ---- constrained orbit: rebuild the frame from the world up axis so
-        # roll is always exactly zero. Deriving it from the camera's own up
-        # instead carries any existing tilt forever, and pitching about a
-        # rolled right-vector adds more of it every frame - which is what made
-        # this feel like free orbit. ----
-        right = fwd.crossProduct(upAxis)
-        if right.length < 0.02:
-            right = fwd.crossProduct(up)    # at the pole: keep current roll,
-        right.normalize()                   # not cross-product noise
-        trueUp = right.crossProduct(fwd)
-        trueUp.normalize()
+            # ---- constrained orbit (turntable: yaw about world up through
+            # target, pitch about camera-right through target, clamped near
+            # the poles) ----
+            if abs(yawA) > 1e-9:
+                m = adsk.core.Matrix3D.create()
+                m.setToRotation(yawA, upAxis, tgt)
+                eye.transformBy(m)
+                up.transformBy(m)
+                fwd = eye.vectorTo(tgt)
+                fwd.scaleBy(1.0 / max(fwd.length, 1e-12))
+
+            # pitch about the *level* right vector, so pitching never adds
+            # roll. Within ~1 deg of a pole the perpendicular component is
+            # numerical noise whose direction jumps frame to frame (visible
+            # flicker), so derive right from the camera's own up there.
+            right = fwd.crossProduct(upAxis)
+            if right.length < 0.02:
+                right = fwd.crossProduct(up)
+            if right.length < 1e-9:
+                return
+            right.normalize()
+
+            if abs(pitchA) > 1e-9:
+                m = adsk.core.Matrix3D.create()
+                m.setToRotation(pitchA, right, tgt)
+                newEye = eye.copy()
+                newEye.transformBy(m)
+                newFwd = newEye.vectorTo(tgt)
+                if newFwd.length > 1e-9:
+                    newFwd.normalize()
+                    oldAng = fwd.angleTo(upAxis)
+                    ang = newFwd.angleTo(upAxis)
+                    lo, hi = 0.03, math.pi - 0.03
+                    # Checking only the DESTINATION angle is not enough: one
+                    # fast frame (a 5-15 deg step) can rotate straight over
+                    # the pole and land back inside the legal band. That
+                    # flips the view 180 deg, and with smoothed velocity it
+                    # vaults back the next frame - the violent flicker at
+                    # top/bottom views. A vault reverses fwd's horizontal
+                    # component, which no legitimate step does, so reject on
+                    # that reversal.
+                    dOld = fwd.dotProduct(upAxis)
+                    dNew = newFwd.dotProduct(upAxis)
+                    vaulted = (math.sin(oldAng) > 1e-4 and
+                               math.sin(ang) > 1e-4 and
+                               fwd.dotProduct(newFwd) - dOld * dNew < 0.0)
+                    inBand = lo < ang < hi
+                    # always accept a step AWAY from a pole, or a session
+                    # started at ViewCube Top/Bottom has its pitch stuck
+                    # forever
+                    escaping = ((oldAng <= lo and ang > oldAng) or
+                                (oldAng >= hi and ang < oldAng))
+                    if (inBand or escaping) and not vaulted:
+                        eye = newEye
+                        up.transformBy(m)
+                        fwd = newFwd
+
+            # ---- rebuild the frame from the world up axis so roll is always
+            # exactly zero. Deriving it from the camera's own up instead
+            # carries any existing tilt forever, and pitching about a rolled
+            # right-vector adds more of it every frame - which is what made
+            # this feel like free orbit. ----
+            right = fwd.crossProduct(upAxis)
+            if right.length < 0.02:
+                right = fwd.crossProduct(up)  # at the pole: keep current
+            right.normalize()                 # roll, not cross-product noise
+            trueUp = right.crossProduct(fwd)
+            trueUp.normalize()
 
         dist = eye.distanceTo(tgt)
         isOrtho = cam.cameraType == adsk.core.CameraTypes.OrthographicCameraType

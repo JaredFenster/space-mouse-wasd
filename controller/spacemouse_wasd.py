@@ -26,7 +26,7 @@ else:
 from engine_base import SPEED_MIN, SPEED_MAX
 
 APP_NAME = 'SpaceMouse WASD'
-VERSION = '1.5.0'
+VERSION = '1.6.0'
 LOCK_PORT = 42739         # single-instance guard (bound while app runs)
 if sys.platform == 'darwin':
     CONFIG_DIR = os.path.expanduser(
@@ -59,12 +59,19 @@ ACTIONS = [
     ('zoom_out', 'Zoom out'),
 ]
 
+# extra binds that only exist while free orbit is enabled: the mouse covers
+# yaw + pitch, these keys supply the remaining rotation (roll)
+ROLL_ACTIONS = [
+    ('roll_left', 'Roll left'),
+    ('roll_right', 'Roll right'),
+]
+
 
 # --------------------------------------------------------------- config ----
 def load_config():
     cfg = {'binds': dict(backend.DEFAULT_BINDS), 'fly_button': 2,
            'trigger_type': 'button', 'combo': dict(backend.DEFAULT_COMBO),
-           'scroll_mode': 'speed', 'speed': 1.0}
+           'scroll_mode': 'speed', 'free_orbit': False, 'speed': 1.0}
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             saved = json.load(f)
@@ -81,6 +88,8 @@ def load_config():
             cfg['trigger_type'] = saved['trigger_type']
         if saved.get('scroll_mode') in ('speed', 'zoom'):
             cfg['scroll_mode'] = saved['scroll_mode']
+        if isinstance(saved.get('free_orbit'), bool):
+            cfg['free_orbit'] = saved['free_orbit']
         combo = saved.get(COMBO_KEY)
         if (isinstance(combo, dict) and isinstance(combo.get('code'), int)
                 and isinstance(combo.get('mods'), list)):
@@ -102,7 +111,8 @@ def save_config(cfg):
     out = {BINDS_KEY: cfg['binds'], COMBO_KEY: cfg['combo'],
            'trigger_type': cfg['trigger_type'],
            'fly_button': cfg['fly_button'],
-           'scroll_mode': cfg['scroll_mode'], 'speed': cfg['speed']}
+           'scroll_mode': cfg['scroll_mode'],
+           'free_orbit': cfg['free_orbit'], 'speed': cfg['speed']}
     out.update(cfg.get('_other_os', {}))    # keep the other OS's settings
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -348,6 +358,34 @@ class App:
         bcard.grid_columnconfigure(0, weight=1)
 
         r = len(ACTIONS) + 1
+        tk.Label(bcard, text='Free orbit', font=FONT, fg=TEXT, bg=CARD,
+                 anchor='w').grid(row=r, column=0, sticky='w',
+                                  padx=(14, 20), pady=(10, 3))
+        self.free_btn = FlatButton(
+            bcard, text='On' if cfg['free_orbit'] else 'Off',
+            command=self.on_free_orbit)
+        if cfg['free_orbit']:
+            self.free_btn.config(fg=ACCENT)
+        self.free_btn.grid(row=r, column=1, sticky='e', padx=(0, 14),
+                           pady=(10, 3))
+
+        self.roll_widgets = []
+        for action, label in ROLL_ACTIONS:
+            r += 1
+            lbl = tk.Label(bcard, text=label, font=FONT, fg=TEXT, bg=CARD,
+                           anchor='w')
+            lbl.grid(row=r, column=0, sticky='w', padx=(14, 20), pady=3)
+            btn = FlatButton(bcard,
+                             text=backend.key_name(cfg['binds'][action]),
+                             command=lambda a=action: self.begin_capture(a))
+            btn.grid(row=r, column=1, sticky='e', padx=(0, 14), pady=3)
+            self.bind_buttons[action] = btn
+            self.roll_widgets += [lbl, btn]
+        if not cfg['free_orbit']:
+            for wdg in self.roll_widgets:
+                wdg.grid_remove()
+
+        r += 1
         tk.Label(bcard, text='Fly trigger', font=FONT, fg=TEXT, bg=CARD,
                  anchor='w').grid(row=r, column=0, sticky='w',
                                   padx=(14, 20), pady=(10, 3))
@@ -511,6 +549,19 @@ class App:
         save_config(self.cfg)
         self._update_hint()
 
+    def on_free_orbit(self):
+        on = not self.cfg['free_orbit']
+        self.cfg['free_orbit'] = on
+        self.engine.set_free_orbit(on)
+        self.free_btn.config(text='On' if on else 'Off',
+                             fg=ACCENT if on else TEXT)
+        for wdg in self.roll_widgets:
+            if on:
+                wdg.grid()
+            else:
+                wdg.grid_remove()
+        save_config(self.cfg)
+
     def begin_combo_capture(self):
         if self.capturing:
             self.end_capture()
@@ -549,7 +600,12 @@ class App:
         self.cfg['trigger_type'] = 'button'
         self.cfg['combo'] = dict(backend.DEFAULT_COMBO)
         self.cfg['scroll_mode'] = 'speed'
+        self.cfg['free_orbit'] = False
         self.cfg['speed'] = 1.0
+        self.engine.set_free_orbit(False)
+        self.free_btn.config(text='Off', fg=TEXT)
+        for wdg in self.roll_widgets:
+            wdg.grid_remove()
         self.engine.set_binds(self.cfg['binds'])
         self.engine.fly_button = 2
         self.engine.trigger_type = 'button'
