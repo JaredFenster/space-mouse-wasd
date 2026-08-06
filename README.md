@@ -155,10 +155,10 @@ After editing, re-run `install_addin.bat` and restart the add-in
   software sends.
 - **Wrong orbit/zoom direction** — flip the `INVERT_*` flags in the add-in.
 - **Orbit tilts the horizon / feels like free orbit** — fixed in add-in
-  v1.5.0: orbit now works exactly like Fusion's native constrained orbit,
-  preserving whatever your view's up direction is when you start flying
-  instead of guessing a world axis. Update the add-in
-  (re-run the installer, then Stop/Run it in Fusion).
+  v1.5.1: orbit now turns around the same axis as Fusion's native
+  constrained orbit — the document's own up axis, read per-document from
+  the API (documents can be Y-up or Z-up, so no single fixed axis works).
+  Update the add-in (re-run the installer, then Stop/Run it in Fusion).
 - **Nothing happens after granting permission on macOS** — TCC ties the
   grant to the exact signed app; rebuilding with `build_app.sh` ad-hoc-signs
   it, so if a rebuild's identity changes you may need to remove and re-add

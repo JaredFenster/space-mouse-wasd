@@ -30,9 +30,10 @@ INVERT_ORBIT_X = False    # flip horizontal orbit direction
 INVERT_ORBIT_Y = False    # flip vertical orbit direction
 INVERT_ZOOM = False       # flip W/S
 ORBIT_UP_AXIS = 'auto'    # turntable axis: 'auto' | 'x' | 'y' | 'z'
-                          # auto = the view's own up at fly start, like
-                          # Fusion's native constrained orbit (see
-                          # _sessionUpAxis). Pin only for special setups.
+                          # auto = the document's own up axis (what the
+                          # ViewCube and Fusion's native constrained orbit
+                          # use - see _documentUpAxis). Pin only for
+                          # special setups.
 # ----------------------------------------------------------------------------
 
 EVENT_ID = 'SpaceMouseWASD_navEvent'
@@ -56,29 +57,66 @@ def _log(msg):
         pass
 
 
-def _sessionUpAxis(camUp, fwd):
-    """Turntable axis for a fly session: the view's own up vector,
-    orthonormalized against the view direction.
+def _prefUpIndex():
+    try:
+        pref = _app.preferences.generalPreferences.defaultModelingOrientation
+        if pref == adsk.core.DefaultModelingOrientations.YUpModelingOrientation:
+            return 1
+    except Exception:
+        pass
+    return 2
 
-    This is what Fusion's native constrained orbit preserves - whatever
-    the current view treats as up. No world-axis detection: every scheme
-    that guessed a world axis from the camera (1.3.1 nearest-axis, 1.3.3
-    level-horizon, 1.4.0 user pin) picked wrong on some document, because
-    Fusion documents don't share one internal up. A tilted view stays
-    tilted, exactly like native orbit, and the zero-roll frame rebuild in
-    _applyCamera keeps THIS axis's horizon from drifting mid-session."""
+
+_lastAxisLog = [None]
+
+
+def _documentUpAxis(vp, camUp):
+    """The document's up axis - the axis the ViewCube and Fusion's native
+    constrained orbit turn around. It is per-document (Y-up or Z-up,
+    fixed at creation), which is why every camera-derived guess and even
+    a user-pinned axis picked wrong on some documents.
+
+    The API doesn't expose it directly, but a transient Camera set to the
+    standard TOP orientation places its eye along the document's up axis.
+    Self-validating: FRONT must disagree with TOP, otherwise the transient
+    camera didn't actually recompute and we fall back to the
+    modeling-orientation preference. The sign follows the session's
+    starting up vector so an upside-down view keeps working instead of
+    snapping over."""
+    axis = None
     if ORBIT_UP_AXIS in ('x', 'y', 'z'):
-        i = 'xyz'.index(ORBIT_UP_AXIS)
-        s = -1.0 if (camUp.x, camUp.y, camUp.z)[i] < 0 else 1.0
-        v = [0.0, 0.0, 0.0]
-        v[i] = s
-        return adsk.core.Vector3D.create(*v)
-    right = fwd.crossProduct(camUp)
-    up = right.crossProduct(fwd)
-    if up.length < 1e-9:
-        return camUp.copy()
-    up.normalize()
-    return up
+        axis = [0.0, 0.0, 0.0]
+        axis['xyz'.index(ORBIT_UP_AXIS)] = 1.0
+    else:
+        try:
+            cam = vp.camera        # transient copy; never assigned back
+            cam.viewOrientation = \
+                adsk.core.ViewOrientations.TopViewOrientation
+            v1 = cam.target.vectorTo(cam.eye)
+            cam.viewOrientation = \
+                adsk.core.ViewOrientations.FrontViewOrientation
+            v2 = cam.target.vectorTo(cam.eye)
+            if v1.length > 1e-9 and v2.length > 1e-9:
+                v1.normalize()
+                v2.normalize()
+                comps = (v1.x, v1.y, v1.z)
+                i = max(range(3), key=lambda n: abs(comps[n]))
+                if abs(comps[i]) > 0.9 and abs(v1.dotProduct(v2)) < 0.5:
+                    axis = [0.0, 0.0, 0.0]
+                    axis[i] = 1.0
+        except Exception:
+            axis = None
+        if axis is None:
+            axis = [0.0, 0.0, 0.0]
+            axis[_prefUpIndex()] = 1.0
+    d = axis[0] * camUp.x + axis[1] * camUp.y + axis[2] * camUp.z
+    if d < -0.05:
+        axis = [-a for a in axis]
+    tag = '%+d%+d%+d' % tuple(round(a) for a in axis)
+    if tag != _lastAxisLog[0]:
+        _lastAxisLog[0] = tag
+        _log('orbit axis: (%s)' % tag)
+    return adsk.core.Vector3D.create(*axis)
 
 
 _bboxCache = {'stale': True, 'pt': None}
@@ -240,7 +278,7 @@ class NavEventHandler(adsk.core.CustomEventHandler):
         # latch the axis for the whole fly session: re-deriving it every
         # frame from the evolving camera is how roll compounds
         if self.upAxis is None:
-            self.upAxis = _sessionUpAxis(up, fwd)
+            self.upAxis = _documentUpAxis(vp, up)
         upAxis = self.upAxis
 
         # ---- orbit (turntable: yaw about world up through target, pitch about
