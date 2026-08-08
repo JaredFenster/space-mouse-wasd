@@ -26,7 +26,7 @@ else:
 from engine_base import SPEED_MIN, SPEED_MAX
 
 APP_NAME = 'SpaceMouse WASD'
-VERSION = '1.5.0'
+VERSION = '1.5.4'
 LOCK_PORT = 42739         # single-instance guard (bound while app runs)
 if sys.platform == 'darwin':
     CONFIG_DIR = os.path.expanduser(
