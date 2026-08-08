@@ -278,6 +278,18 @@ class Engine(BaseEngine):
                      (self.fly and wParam == WM_MOUSEWHEEL))):
                 ms = ctypes.cast(lParam,
                                  ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                if wParam == WM_MOUSEWHEEL:
+                    # Only reached while flying (fast-path above). Injected
+                    # wheel events are deliberately accepted here: mouse
+                    # drivers (Logitech Options+ etc.) re-emit the wheel
+                    # synthetically, and filtering those left scroll dead
+                    # during fly for their users - while the event leaked
+                    # through to Fusion's native zoom instead (GitHub
+                    # issue #3, thanks TMTYD).
+                    delta = ctypes.c_short(
+                        (ms.mouseData >> 16) & 0xFFFF).value
+                    self.wheel_input(delta / 120.0)
+                    return 1
                 if not (ms.flags & LLMHF_INJECTED):
                     if wParam == WM_XBUTTONDOWN:
                         if (self.trigger_type == 'button' and
@@ -294,11 +306,6 @@ class Engine(BaseEngine):
                                 self.fly_button and self.fly):
                             self._stop_fly()
                             return 1
-                    elif wParam == WM_MOUSEWHEEL and self.fly:
-                        delta = ctypes.c_short(
-                            (ms.mouseData >> 16) & 0xFFFF).value
-                        self.wheel_input(delta / 120.0)
-                        return 1
         except Exception:
             pass
         return user32.CallNextHookEx(None, nCode, wParam, lParam)
