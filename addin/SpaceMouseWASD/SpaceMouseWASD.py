@@ -281,8 +281,9 @@ class NavEventHandler(adsk.core.CustomEventHandler):
             self.upAxis = _documentUpAxis(vp, up)
         upAxis = self.upAxis
 
-        # ---- orbit (turntable: yaw about world up through target, pitch about
-        # camera-right through target, clamped near the poles) ----
+        # ---- orbit (turntable: yaw about world up through target, pitch
+        # about camera-right through target; pitch carries over the poles,
+        # flipping the axis so the view continues upside down) ----
         sx = -1.0 if INVERT_ORBIT_X else 1.0
         sy = -1.0 if INVERT_ORBIT_Y else 1.0
         yawA = -self.orbVel[0] * dt * ORBIT_SENS * sx
@@ -300,57 +301,48 @@ class NavEventHandler(adsk.core.CustomEventHandler):
         # Within ~1 deg of a pole the perpendicular component is numerical
         # noise whose direction jumps frame to frame (visible flicker), so
         # derive right from the camera's own up there instead.
-        right = fwd.crossProduct(upAxis)
-        if right.length < 0.02:
-            right = fwd.crossProduct(up)
-        if right.length < 1e-9:
-            return
-        right.normalize()
-
+        # No pole clamp: pitching straight over the top is allowed - the
+        # rebuild below detects the crossing and flips the axis, so the
+        # view continues upside down instead of stopping (or snapping).
         if abs(pitchA) > 1e-9:
+            right = fwd.crossProduct(upAxis)
+            if right.length < 0.02:
+                right = fwd.crossProduct(up)
+            if right.length < 1e-9:
+                return
+            right.normalize()
             m = adsk.core.Matrix3D.create()
             m.setToRotation(pitchA, right, tgt)
-            newEye = eye.copy()
-            newEye.transformBy(m)
-            newFwd = newEye.vectorTo(tgt)
-            if newFwd.length > 1e-9:
-                newFwd.normalize()
-                oldAng = fwd.angleTo(upAxis)
-                ang = newFwd.angleTo(upAxis)
-                lo, hi = 0.03, math.pi - 0.03
-                # Checking only the DESTINATION angle is not enough: one
-                # fast frame (a 5-15 deg step) can rotate straight over the
-                # pole and land back inside the legal band. That flips the
-                # view 180 deg, and with smoothed velocity it vaults back
-                # the next frame - the violent flicker at top/bottom views.
-                # A vault reverses fwd's horizontal component, which no
-                # legitimate step does, so reject on that reversal.
-                dOld = fwd.dotProduct(upAxis)
-                dNew = newFwd.dotProduct(upAxis)
-                vaulted = (math.sin(oldAng) > 1e-4 and
-                           math.sin(ang) > 1e-4 and
-                           fwd.dotProduct(newFwd) - dOld * dNew < 0.0)
-                inBand = lo < ang < hi
-                # always accept a step AWAY from a pole, or a session
-                # started at ViewCube Top/Bottom has its pitch stuck forever
-                escaping = ((oldAng <= lo and ang > oldAng) or
-                            (oldAng >= hi and ang < oldAng))
-                if (inBand or escaping) and not vaulted:
-                    eye = newEye
-                    up.transformBy(m)
-                    fwd = newFwd
+            eye.transformBy(m)
+            up.transformBy(m)
+            fwd = eye.vectorTo(tgt)
+            fwd.scaleBy(1.0 / max(fwd.length, 1e-12))
 
-        # ---- constrained orbit: rebuild the frame from the world up axis so
-        # roll is always exactly zero. Deriving it from the camera's own up
-        # instead carries any existing tilt forever, and pitching about a
-        # rolled right-vector adds more of it every frame - which is what made
-        # this feel like free orbit. ----
+        # ---- rebuild the frame from the world up axis so roll is always
+        # exactly zero (deriving it from the camera's own up compounds
+        # tilt - the old free-orbit-feel bug). The carried camera up is
+        # continuous by construction, so if the level rebuild OPPOSES it
+        # the view crossed a pole this frame: flip the latched axis and
+        # carry on upside down. Detecting the crossing here instead of
+        # in the pitch step also catches a frame that lands exactly on
+        # the pole (verified in flip_sim.py). ----
         right = fwd.crossProduct(upAxis)
-        if right.length < 0.02:
-            right = fwd.crossProduct(up)    # at the pole: keep current roll,
-        right.normalize()                   # not cross-product noise
-        trueUp = right.crossProduct(fwd)
-        trueUp.normalize()
+        if right.length >= 0.02:
+            right.normalize()
+            trueUp = right.crossProduct(fwd)
+            if trueUp.dotProduct(up) < 0.0:
+                upAxis.scaleBy(-1.0)    # mutates self.upAxis: the flip
+                right.scaleBy(-1.0)     # persists for the session
+                trueUp.scaleBy(-1.0)
+                _log('orbit flipped over the pole')
+            trueUp.normalize()
+        else:
+            right = fwd.crossProduct(up)  # at the pole: keep current
+            if right.length < 1e-9:       # roll, not cross-product noise
+                return
+            right.normalize()
+            trueUp = right.crossProduct(fwd)
+            trueUp.normalize()
 
         dist = eye.distanceTo(tgt)
         isOrtho = cam.cameraType == adsk.core.CameraTypes.OrthographicCameraType
